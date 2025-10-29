@@ -31,7 +31,12 @@
     // `zig build --fetch` can be used to fetch all dependencies of a package, recursively.
     // Once all dependencies are fetched, `zig build` no longer requires
     // internet connectivity.
-    .dependencies = .{},
+    .dependencies = .{
+        .lz4 = .{
+            .url = "https://github.com/jedisct1/zig-lz4/archive/refs/heads/master.tar.gz",
+            .hash = "lz4-0.1.0-fUqx0elxAwAth6pVng9hRPNyYmwr2_4kJXv0PO9R9ZEJ",
+        },
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",

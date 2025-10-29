@@ -28,28 +28,10 @@ pub fn build(b: *std.Build) void {
     // to our consumers. We must give it a name because a Zig package can expose
     // multiple modules and consumers will need to be able to specify which
     // module they want to access.
-    // Create a static library for LZ4 that can be linked by all executables
-    const lz4_lib = b.addLibrary(.{
-        .name = "lz4",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/lz4.zig"),
-            .target = target,
-            .optimize = optimize,
-            .link_libc = true,
-        }),
-    });
-    lz4_lib.addIncludePath(b.path("src/lz4"));
-    lz4_lib.addCSourceFiles(.{
-        .files = &.{
-            "src/lz4/lz4.c",
-            "src/lz4/lz4hc.c",
-            "src/lz4/lz4frame.c",
-            "src/lz4/xxhash.c",
-        },
-        .flags = &.{"-fno-sanitize=undefined"},
-    });
-    lz4_lib.installHeadersDirectory(b.path("src/lz4"), "", .{
-        .include_extensions = &.{"lz4.h"},
+    // Get the zig-lz4 dependency
+    const lz4_dep = b.dependency("lz4", .{
+        .target = target,
+        .optimize = optimize,
     });
 
     const mod = b.addModule("xet", .{
@@ -63,12 +45,10 @@ pub fn build(b: *std.Build) void {
         // Later on we'll use this module as the root module of a test executable
         // which requires us to specify a target.
         .target = target,
-        // Link with libc for LZ4
-        .link_libc = true,
     });
 
-    // Add LZ4 include path to module
-    mod.addIncludePath(b.path("src/lz4"));
+    // Add zig-lz4 module import
+    mod.addImport("lz4", lz4_dep.module("lz4"));
 
     // Here we define an executable. An executable needs to have a root module
     // which needs to expose a `main` function. While we could add a main function
@@ -99,8 +79,6 @@ pub fn build(b: *std.Build) void {
             // definition if desireable (e.g. firmware for embedded devices).
             .target = target,
             .optimize = optimize,
-            // Link with libc for LZ4
-            .link_libc = true,
             // List of modules available for import in source files part of the
             // root module.
             .imports = &.{
@@ -113,10 +91,6 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-
-    // Link LZ4 library and add include path
-    exe.linkLibrary(lz4_lib);
-    exe.addIncludePath(b.path("src/lz4"));
 
     // This declares intent for the executable to be installed into the
     // install prefix when running `zig build` (i.e. when executing the default
@@ -157,10 +131,6 @@ pub fn build(b: *std.Build) void {
         .root_module = mod,
     });
 
-    // Link LZ4 library and add include path for tests
-    mod_tests.linkLibrary(lz4_lib);
-    mod_tests.addIncludePath(b.path("src/lz4"));
-
     // A run step that will run the test executable.
     const run_mod_tests = b.addRunArtifact(mod_tests);
 
@@ -170,10 +140,6 @@ pub fn build(b: *std.Build) void {
     const exe_tests = b.addTest(.{
         .root_module = exe.root_module,
     });
-
-    // Link LZ4 library and add include path for tests
-    exe_tests.linkLibrary(lz4_lib);
-    exe_tests.addIncludePath(b.path("src/lz4"));
 
     // A run step that will run the second test executable.
     const run_exe_tests = b.addRunArtifact(exe_tests);
@@ -192,16 +158,11 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/benchmark_main.zig"),
             .target = target,
             .optimize = .ReleaseFast,
-            .link_libc = true,
             .imports = &.{
                 .{ .name = "xet", .module = mod },
             },
         }),
     });
-
-    // Link LZ4 library and add include path for benchmarks
-    bench_exe.linkLibrary(lz4_lib);
-    bench_exe.addIncludePath(b.path("src/lz4"));
 
     b.installArtifact(bench_exe);
 
@@ -217,16 +178,11 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("examples/download_model.zig"),
             .target = target,
             .optimize = optimize,
-            .link_libc = true,
             .imports = &.{
                 .{ .name = "xet", .module = mod },
             },
         }),
     });
-
-    // Link LZ4 library and add include path for example
-    download_example.linkLibrary(lz4_lib);
-    download_example.addIncludePath(b.path("src/lz4"));
 
     b.installArtifact(download_example);
 
