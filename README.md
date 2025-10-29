@@ -1,5 +1,7 @@
 # zig-xet
 
+<img src=".media/logo.jpg" />
+
 A pure Zig implementation of the XET protocol for efficient file storage and retrieval through content-defined chunking and deduplication.
 
 ## What is this?
