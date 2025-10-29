@@ -21,39 +21,43 @@ pub const CompressionResult = struct {
     type: constants.CompressionType,
 };
 
+fn lz4FrameCompress(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
+    const max_compressed_size = c.LZ4F_compressFrameBound(data.len, null);
+    const compressed_buffer = try allocator.alloc(u8, max_compressed_size);
+    errdefer allocator.free(compressed_buffer);
+
+    const compressed_size = c.LZ4F_compressFrame(
+        @ptrCast(compressed_buffer.ptr),
+        max_compressed_size,
+        @ptrCast(data.ptr),
+        data.len,
+        null,
+    );
+
+    if (c.LZ4F_isError(compressed_size) != 0) {
+        return error.CompressionFailed;
+    }
+
+    const result = try allocator.realloc(compressed_buffer, compressed_size);
+    return result;
+}
+
 fn compressLZ4(
     allocator: std.mem.Allocator,
     data: []const u8,
     original_size: usize,
     compression_type: constants.CompressionType,
 ) !CompressionResult {
-    const max_compressed_size = c.LZ4_compressBound(@intCast(data.len));
-    if (max_compressed_size <= 0) return error.CompressionFailed;
+    const compressed_data = try lz4FrameCompress(allocator, data);
+    const final_size = compressed_data.len;
 
-    const compressed_buffer = try allocator.alloc(u8, @intCast(max_compressed_size));
-    errdefer allocator.free(compressed_buffer);
-
-    const compressed_size = c.LZ4_compress_default(
-        @ptrCast(data.ptr),
-        @ptrCast(compressed_buffer.ptr),
-        @intCast(data.len),
-        @intCast(max_compressed_size),
-    );
-
-    if (compressed_size <= 0) {
-        allocator.free(compressed_buffer);
-        return error.CompressionFailed;
-    }
-
-    const final_size: usize = @intCast(compressed_size);
     if (final_size >= original_size) {
-        allocator.free(compressed_buffer);
+        allocator.free(compressed_data);
         const result = try allocator.dupe(u8, data);
         return .{ .data = result, .type = .None };
     }
 
-    const result = try allocator.realloc(compressed_buffer, final_size);
-    return .{ .data = result, .type = compression_type };
+    return .{ .data = compressed_data, .type = compression_type };
 }
 
 pub fn compress(
