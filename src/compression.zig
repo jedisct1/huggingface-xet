@@ -77,26 +77,49 @@ pub fn compress(
     }
 }
 
-fn lz4BlockDecompress(allocator: std.mem.Allocator, data: []const u8, uncompressed_size: usize) ![]u8 {
-    const result = try allocator.alloc(u8, uncompressed_size);
-    errdefer allocator.free(result);
-
-    const decompressed_size = c.LZ4_decompress_safe(
-        @ptrCast(data.ptr),
-        @ptrCast(result.ptr),
-        @intCast(data.len),
-        @intCast(uncompressed_size),
-    );
-
-    if (decompressed_size < 0) {
+fn lz4FrameDecompress(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
+    // Create decompression context
+    var dctx: ?*c.LZ4F_dctx = null;
+    const create_result = c.LZ4F_createDecompressionContext(@ptrCast(&dctx), c.LZ4F_VERSION);
+    if (c.LZ4F_isError(create_result) != 0) {
         return error.DecompressionFailed;
     }
+    defer _ = c.LZ4F_freeDecompressionContext(dctx);
 
-    if (@as(usize, @intCast(decompressed_size)) != uncompressed_size) {
-        return error.InvalidUncompressedSize;
+    // Allocate output buffer (start with 4x compressed size as estimate)
+    var output = std.ArrayList(u8).empty;
+    errdefer output.deinit(allocator);
+
+    // Decompress in chunks
+    var src_pos: usize = 0;
+    var decompress_buffer: [64 * 1024]u8 = undefined;
+
+    while (src_pos < data.len) {
+        var src_size = data.len - src_pos;
+        var dst_size = decompress_buffer.len;
+
+        const result = c.LZ4F_decompress(
+            dctx,
+            @ptrCast(&decompress_buffer),
+            @ptrCast(&dst_size),
+            @ptrCast(data.ptr + src_pos),
+            @ptrCast(&src_size),
+            null,
+        );
+
+        if (c.LZ4F_isError(result) != 0) {
+            return error.DecompressionFailed;
+        }
+
+        // Append decompressed data
+        try output.appendSlice(allocator, decompress_buffer[0..dst_size]);
+        src_pos += src_size;
+
+        // If result is 0, decompression is complete
+        if (result == 0) break;
     }
 
-    return result;
+    return output.toOwnedSlice(allocator);
 }
 
 pub fn decompress(
@@ -113,10 +136,16 @@ pub fn decompress(
             return try allocator.dupe(u8, data);
         },
         .LZ4 => {
-            return try lz4BlockDecompress(allocator, data, uncompressed_size);
+            const decompressed = try lz4FrameDecompress(allocator, data);
+            // Verify size matches expected
+            if (decompressed.len != uncompressed_size) {
+                allocator.free(decompressed);
+                return error.InvalidUncompressedSize;
+            }
+            return decompressed;
         },
         .ByteGrouping4LZ4 => {
-            const lz4_decompressed = try lz4BlockDecompress(allocator, data, uncompressed_size);
+            const lz4_decompressed = try lz4FrameDecompress(allocator, data);
             defer allocator.free(lz4_decompressed);
             return try reverseByteGrouping(allocator, lz4_decompressed);
         },
