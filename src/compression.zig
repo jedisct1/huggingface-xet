@@ -89,12 +89,10 @@ fn lz4BlockDecompress(allocator: std.mem.Allocator, data: []const u8, uncompress
     );
 
     if (decompressed_size < 0) {
-        allocator.free(result);
         return error.DecompressionFailed;
     }
 
     if (@as(usize, @intCast(decompressed_size)) != uncompressed_size) {
-        allocator.free(result);
         return error.InvalidUncompressedSize;
     }
 
