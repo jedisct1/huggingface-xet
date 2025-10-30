@@ -34,7 +34,7 @@
     .dependencies = .{
         .lz4 = .{
             .url = "https://github.com/jedisct1/zig-lz4/archive/refs/heads/master.tar.gz",
-            .hash = "lz4-0.1.0-fUqx0elxAwAth6pVng9hRPNyYmwr2_4kJXv0PO9R9ZEJ",
+            .hash = "lz4-0.1.0-fUqx0WZqAwCazL3_Ua1gl5SekV6qWUAQmEwhTyE9fr9X",
         },
     },
     .paths = .{
