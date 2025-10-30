@@ -17,17 +17,11 @@ pub const DownloadConfig = struct {
     hf_token: ?[]const u8 = null,
 };
 
-/// Result from XET token exchange with Hugging Face Hub
-const XetTokenResult = struct {
-    access_token: []const u8,
-    cas_url: []const u8,
+/// Token Response from request in camelCase to match JSON
+const XetTokenResponse = struct {
+    accessToken: []const u8,
+    casUrl: []const u8,
     exp: i64,
-    allocator: Allocator,
-    json_parsed: std.json.Parsed(std.json.Value),
-
-    pub fn deinit(self: *XetTokenResult) void {
-        self.json_parsed.deinit();
-    }
 };
 
 /// Request XET access token from Hugging Face Hub
@@ -35,7 +29,7 @@ fn requestXetToken(
     allocator: Allocator,
     config: DownloadConfig,
     hf_token: []const u8,
-) !XetTokenResult {
+) !std.json.Parsed(XetTokenResponse) {
     // Build token URL
     const token_url = try std.fmt.allocPrint(
         allocator,
@@ -73,28 +67,13 @@ fn requestXetToken(
     // Parse JSON response
     var reader = response.reader(&.{});
     const token_body = try reader.allocRemaining(allocator, @enumFromInt(10 * 1024));
-    defer allocator.free(token_body);
 
-    const parsed = try std.json.parseFromSlice(
-        std.json.Value,
+    return try std.json.parseFromSlice(
+        XetTokenResponse,
         allocator,
         token_body,
         .{},
     );
-    errdefer parsed.deinit();
-
-    const root = parsed.value.object;
-    const access_token = root.get("accessToken").?.string;
-    const cas_url = root.get("casUrl").?.string;
-    const exp = root.get("exp").?.integer;
-
-    return XetTokenResult{
-        .access_token = access_token,
-        .cas_url = cas_url,
-        .exp = exp,
-        .allocator = allocator,
-        .json_parsed = parsed,
-    };
 }
 
 /// Download a model from Hugging Face and write it to a file
@@ -180,8 +159,8 @@ pub fn downloadModelToWriter(
     // Initialize CAS client
     var cas = try cas_client.CasClient.init(
         allocator,
-        xet_token.cas_url,
-        xet_token.access_token,
+        xet_token.value.casUrl,
+        xet_token.value.accessToken,
     );
     defer cas.deinit();
 
@@ -238,8 +217,8 @@ pub fn downloadModel(
     // Initialize CAS client
     var cas = try cas_client.CasClient.init(
         allocator,
-        xet_token.cas_url,
-        xet_token.access_token,
+        xet_token.value.casUrl,
+        xet_token.value.accessToken,
     );
     defer cas.deinit();
 

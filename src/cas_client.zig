@@ -10,19 +10,6 @@ const Allocator = std.mem.Allocator;
 /// - Xorb uploads
 /// - Shard uploads
 /// - Proper error handling with retryable vs non-retryable errors
-/// Authentication token structure
-pub const XetToken = struct {
-    access_token: []const u8,
-    exp: i64,
-    cas_url: []const u8,
-    allocator: Allocator,
-
-    pub fn deinit(self: *XetToken) void {
-        self.allocator.free(self.access_token);
-        self.allocator.free(self.cas_url);
-    }
-};
-
 /// HTTP error classification
 pub const ErrorClass = enum {
     retryable,
