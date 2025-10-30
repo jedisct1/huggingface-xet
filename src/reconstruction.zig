@@ -141,11 +141,11 @@ pub const FileReconstructor = struct {
         }
 
         const size_u64 = end - start;
-        const result_len = std.math.cast(usize, size_u64) catch return error.RangeTooLarge;
+        const result_len = std.math.cast(usize, size_u64) orelse return error.RangeTooLarge;
         const result = try self.allocator.alloc(u8, result_len);
         errdefer self.allocator.free(result);
 
-        var pending_skip = std.math.cast(usize, recon.offset_into_first_range) catch return error.OffsetTooLarge;
+        var pending_skip = std.math.cast(usize, recon.offset_into_first_range) orelse return error.OffsetTooLarge;
         var remaining = result_len;
         var result_offset: usize = 0;
 
