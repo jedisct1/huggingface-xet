@@ -129,7 +129,7 @@ pub const XorbBuilder = struct {
         for (self.chunks.items, 0..) |chunk, i| {
             nodes[i] = .{
                 .hash = chunk.hash,
-                .size = chunk.data.len,
+                .size = @as(u64, @intCast(chunk.data.len)),
             };
         }
 

@@ -266,7 +266,7 @@ pub fn benchmarkEndToEnd(allocator: std.mem.Allocator) !BenchmarkResult {
         const chunk_hash = hashing.computeDataHash(chunk);
         try chunk_infos.append(allocator, .{
             .hash = chunk_hash,
-            .size = chunk.len,
+            .size = @as(u64, @intCast(chunk.len)),
         });
     }
 

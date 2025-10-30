@@ -101,8 +101,8 @@ test "ByteGrouping4LZ4: Rust test suite sizes" {
 
     // These are the exact sizes tested in Rust test suite
     const sizes = [_]usize{
-        64 * 1024,       // 65536 bytes - perfectly aligned
-        64 * 1024 - 53,  // 65483 bytes - rem=3
+        64 * 1024, // 65536 bytes - perfectly aligned
+        64 * 1024 - 53, // 65483 bytes - rem=3
         64 * 1024 + 135, // 65671 bytes - rem=3
     };
 

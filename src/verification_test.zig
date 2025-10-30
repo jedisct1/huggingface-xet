@@ -255,7 +255,7 @@ test "end-to-end: chunk and hash small file" {
         const len = boundary.size();
         const chunk_data = data[start..][0..len];
         const hash = hashing.computeDataHash(chunk_data);
-        try chunk_hashes.append(allocator, .{ .hash = hash, .size = len });
+        try chunk_hashes.append(allocator, .{ .hash = hash, .size = @as(u64, @intCast(len)) });
     }
 
     // Compute file hash (Merkle tree root + file hash transform)
@@ -274,7 +274,7 @@ test "end-to-end: chunk and hash small file" {
         const len = boundary.size();
         const chunk_data = data[start..][0..len];
         const hash = hashing.computeDataHash(chunk_data);
-        try chunk_hashes2.append(allocator, .{ .hash = hash, .size = len });
+        try chunk_hashes2.append(allocator, .{ .hash = hash, .size = @as(u64, @intCast(len)) });
     }
 
     const merkle_root2 = try hashing.buildMerkleTree(allocator, chunk_hashes2.items);
