@@ -5,32 +5,34 @@ const constants = @import("constants.zig");
 
 pub const Hash = [constants.HashSize]u8;
 
-inline fn computeHashWithKey(key: [32]u8, data: []const u8) Hash {
-    var hasher = std.crypto.hash.Blake3.init(.{ .key = key });
-    hasher.update(data);
+pub fn computeDataHash(data: []const u8) Hash {
     var hash: Hash = undefined;
-    hasher.final(&hash);
+    std.crypto.hash.Blake3.hash(data, &hash, .{ .key = constants.DataKey });
     return hash;
 }
 
-pub fn computeDataHash(data: []const u8) Hash {
-    return computeHashWithKey(constants.DataKey, data);
-}
-
 pub fn computeInternalNodeHash(data: []const u8) Hash {
-    return computeHashWithKey(constants.InternalNodeKey, data);
+    var hash: Hash = undefined;
+    std.crypto.hash.Blake3.hash(data, &hash, .{ .key = constants.InternalNodeKey });
+    return hash;
 }
 
 pub fn computeFileHash(merkle_root: Hash) Hash {
-    return computeHashWithKey(constants.FileHashKey, &merkle_root);
+    var hash: Hash = undefined;
+    std.crypto.hash.Blake3.hash(&merkle_root, &hash, .{ .key = constants.FileHashKey });
+    return hash;
 }
 
 pub fn computeVerificationHash(data: []const u8) Hash {
-    return computeHashWithKey(constants.VerificationKey, data);
+    var hash: Hash = undefined;
+    std.crypto.hash.Blake3.hash(data, &hash, .{ .key = constants.VerificationKey });
+    return hash;
 }
 
 pub fn hmac(key: [32]u8, message: []const u8) Hash {
-    return computeHashWithKey(key, message);
+    var hash: Hash = undefined;
+    std.crypto.hash.Blake3.hash(message, &hash, .{ .key = key });
+    return hash;
 }
 
 pub fn hashToHex(hash: Hash) [64]u8 {
