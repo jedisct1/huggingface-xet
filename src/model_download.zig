@@ -44,8 +44,10 @@ fn requestXetToken(
     );
     defer allocator.free(token_url);
 
-    // Initialize HTTP client
-    var http_client = std.http.Client{ .allocator = allocator };
+    // Initialize HTTP client with Io instance
+    var io_instance = std.Io.Threaded.init(allocator);
+    defer io_instance.deinit();
+    var http_client = std.http.Client{ .allocator = allocator, .io = io_instance.io() };
     defer http_client.deinit();
 
     // Prepare authorization header

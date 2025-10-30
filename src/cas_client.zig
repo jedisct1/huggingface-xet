@@ -194,14 +194,20 @@ pub const CasClient = struct {
     allocator: Allocator,
     cas_url: []const u8,
     access_token: []const u8,
+    io_instance: *std.Io.Threaded,
     http_client: std.http.Client,
 
     pub fn init(allocator: Allocator, cas_url: []const u8, access_token: []const u8) !CasClient {
+        const io_instance = try allocator.create(std.Io.Threaded);
+        errdefer allocator.destroy(io_instance);
+        io_instance.* = std.Io.Threaded.init(allocator);
+
         return CasClient{
             .allocator = allocator,
             .cas_url = try allocator.dupe(u8, cas_url),
             .access_token = try allocator.dupe(u8, access_token),
-            .http_client = std.http.Client{ .allocator = allocator },
+            .io_instance = io_instance,
+            .http_client = std.http.Client{ .allocator = allocator, .io = io_instance.io() },
         };
     }
 
@@ -209,6 +215,8 @@ pub const CasClient = struct {
         self.allocator.free(self.cas_url);
         self.allocator.free(self.access_token);
         self.http_client.deinit();
+        self.io_instance.deinit();
+        self.allocator.destroy(self.io_instance);
     }
 
     fn makeAuthHeader(self: *CasClient) ![]u8 {

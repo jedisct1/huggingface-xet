@@ -51,7 +51,7 @@ pub fn main() !void {
     try stdout.print("Downloading model using XET protocol...\n", .{});
     try stdout.print("This may take a while for large models.\n\n", .{});
 
-    const start_time = std.time.milliTimestamp();
+    const start_time = try std.time.Instant.now();
 
     // Download the model using the high-level API
     xet.model_download.downloadModelToFile(allocator, config, output_path) catch |err| {
@@ -67,8 +67,9 @@ pub fn main() !void {
         return err;
     };
 
-    const end_time = std.time.milliTimestamp();
-    const elapsed_ms = @as(f64, @floatFromInt(end_time - start_time));
+    const end_time = try std.time.Instant.now();
+    const elapsed_ns = end_time.since(start_time);
+    const elapsed_ms = @as(f64, @floatFromInt(elapsed_ns)) / std.time.ns_per_ms;
     const elapsed_s = elapsed_ms / 1000.0;
 
     // Get file size for stats
