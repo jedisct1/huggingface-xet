@@ -23,14 +23,14 @@ This library implements the full XET protocol spec in Zig, including:
 
 The implementation has been cross-verified against the Rust reference implementation to ensure correctness.
 
-## Quick Start
+## Quick start
 
 ### Requirements
 
 - Zig 0.15 or newer
 - A HuggingFace token (for downloading models)
 
-### Build and Test
+### Build and test
 
 ```bash
 # Build the project
@@ -46,7 +46,7 @@ zig build run
 zig build bench
 ```
 
-### Downloading a Model from HuggingFace
+### Downloading a model from HuggingFace
 
 The most common use case is downloading models efficiently:
 
@@ -60,7 +60,7 @@ zig build run-example-download
 
 This downloads a model using the XET protocol, which handles all the chunking, deduplication, and reconstruction automatically.
 
-### Using as a Library
+### Using as a library
 
 Add to your `build.zig.zon`:
 
@@ -97,7 +97,7 @@ const config = xet.model_download.DownloadConfig{
 try xet.model_download.downloadModelToFile(allocator, config, "output.gguf");
 ```
 
-## How It Works
+## How it works
 
 The XET protocol processes files in several stages:
 
@@ -113,13 +113,13 @@ The XET protocol processes files in several stages:
 
 When downloading from HuggingFace, the library queries the CAS (content-addressable storage) API to find which chunks are needed, fetches them, decompresses, and reconstructs the original file.
 
-## Protocol Compliance
+## Protocol compliance
 
 This implementation follows the official XET protocol specification exactly.
 
 All constants, algorithms, and formats match the reference Rust implementation byte-for-byte. The test suite includes cross-verification tests to ensure continued compatibility.
 
-## Getting a HuggingFace Token
+## Getting a HuggingFace token
 
 1. Go to https://huggingface.co/settings/tokens
 2. Create a new token with "Read access to contents of all public gated repos you can access"
