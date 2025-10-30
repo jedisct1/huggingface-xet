@@ -51,6 +51,8 @@ pub fn main() !void {
     try stdout.print("Downloading model using XET protocol...\n", .{});
     try stdout.print("This may take a while for large models.\n\n", .{});
 
+    try stdout.flush();
+
     const start_time = std.time.milliTimestamp();
 
     // Download the model using the high-level API
