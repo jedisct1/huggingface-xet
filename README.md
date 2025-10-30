@@ -27,7 +27,7 @@ The implementation has been cross-verified against the Rust reference implementa
 
 ### Requirements
 
-- Zig 0.15 or newer
+- Zig 0.16 or newer
 - A HuggingFace token (for downloading models)
 
 ### Build and test
