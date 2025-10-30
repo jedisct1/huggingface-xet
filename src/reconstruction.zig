@@ -100,6 +100,29 @@ pub const FileReconstructor = struct {
         return result;
     }
 
+    fn copyTermIntoRange(
+        result: []u8,
+        term_data: []const u8,
+        pending_skip: *usize,
+        result_offset: *usize,
+        remaining: *usize,
+    ) void {
+        if (remaining.* == 0) return;
+
+        var slice = term_data;
+        if (pending_skip.* != 0) {
+            const skip = @min(pending_skip.*, slice.len);
+            slice = slice[skip..];
+            pending_skip.* -= skip;
+            if (slice.len == 0) return;
+        }
+
+        const to_copy = @min(slice.len, remaining.*);
+        @memcpy(result[result_offset.* ..][0..to_copy], slice[0..to_copy]);
+        result_offset.* += to_copy;
+        remaining.* -= to_copy;
+    }
+
     /// Reconstruct a range of bytes from a file
     /// Returns data for the specified byte range [start, end) (end is exclusive)
     pub fn reconstructRange(
@@ -117,11 +140,13 @@ pub const FileReconstructor = struct {
             mut_recon.deinit();
         }
 
-        const size = end - start;
-        var result = try self.allocator.alloc(u8, size);
+        const size_u64 = end - start;
+        const result_len = std.math.cast(usize, size_u64) catch return error.RangeTooLarge;
+        const result = try self.allocator.alloc(u8, result_len);
         errdefer self.allocator.free(result);
 
-        var file_offset: u64 = start;
+        var pending_skip = std.math.cast(usize, recon.offset_into_first_range) catch return error.OffsetTooLarge;
+        var remaining = result_len;
         var result_offset: usize = 0;
 
         for (recon.terms) |term| {
@@ -132,19 +157,11 @@ pub const FileReconstructor = struct {
             const chunk_data = try xorb_reader.extractChunkRange(xorb_info.local_start, xorb_info.local_end);
             defer self.allocator.free(chunk_data);
 
-            const term_start = file_offset;
-            const term_end = file_offset + chunk_data.len;
-            file_offset = term_end;
-
-            const copy_start = if (term_start < start) start - term_start else 0;
-            const copy_end = if (term_end > end) chunk_data.len - (term_end - end) else chunk_data.len;
-            const copy_size = copy_end - copy_start;
-
-            if (copy_size > 0) {
-                @memcpy(result[result_offset..][0..copy_size], chunk_data[copy_start..copy_end]);
-                result_offset += copy_size;
-            }
+            copyTermIntoRange(result, chunk_data, &pending_skip, &result_offset, &remaining);
+            if (remaining == 0) break;
         }
+
+        if (remaining != 0) return error.SizeMismatch;
 
         return result;
     }
@@ -260,4 +277,24 @@ test "xorb reader - range out of bounds" {
     // Request chunks beyond what exists
     const result = reader.extractChunkRange(0, 10);
     try testing.expectError(error.RangeOutOfBounds, result);
+}
+
+test "copyTermIntoRange applies skip and truncation" {
+    var buffer: [5]u8 = undefined;
+    var result = buffer[0..];
+    var pending_skip: usize = 3;
+    var result_offset: usize = 0;
+    var remaining: usize = result.len;
+
+    const term_a = "abcdef";
+    FileReconstructor.copyTermIntoRange(result, term_a, &pending_skip, &result_offset, &remaining);
+    try std.testing.expectEqual(@as(usize, 0), pending_skip);
+    try std.testing.expectEqual(@as(usize, 3), result_offset);
+    try std.testing.expectEqual(@as(usize, 2), remaining);
+    try std.testing.expectEqualSlices(u8, "def", result[0..result_offset]);
+
+    const term_b = "ghij";
+    FileReconstructor.copyTermIntoRange(result, term_b, &pending_skip, &result_offset, &remaining);
+    try std.testing.expectEqual(@as(usize, 0), remaining);
+    try std.testing.expectEqualSlices(u8, "defgh", result[0..result_offset]);
 }
