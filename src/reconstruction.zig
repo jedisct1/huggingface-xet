@@ -118,7 +118,7 @@ pub const FileReconstructor = struct {
         }
 
         const to_copy = @min(slice.len, remaining.*);
-        @memcpy(result[result_offset.* ..][0..to_copy], slice[0..to_copy]);
+        @memcpy(result[result_offset.*..][0..to_copy], slice[0..to_copy]);
         result_offset.* += to_copy;
         remaining.* -= to_copy;
     }
