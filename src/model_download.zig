@@ -33,6 +33,7 @@ const XetTokenResult = struct {
 /// Request XET access token from Hugging Face Hub
 fn requestXetToken(
     allocator: Allocator,
+    io: std.Io,
     config: DownloadConfig,
     hf_token: []const u8,
 ) !XetTokenResult {
@@ -44,10 +45,8 @@ fn requestXetToken(
     );
     defer allocator.free(token_url);
 
-    // Initialize HTTP client with Io instance
-    var io_instance = std.Io.Threaded.init(allocator);
-    defer io_instance.deinit();
-    var http_client = std.http.Client{ .allocator = allocator, .io = io_instance.io() };
+    // Initialize HTTP client
+    var http_client = std.http.Client{ .allocator = allocator, .io = io };
     defer http_client.deinit();
 
     // Prepare authorization header
@@ -125,6 +124,7 @@ fn requestXetToken(
 /// ```
 pub fn downloadModelToFile(
     allocator: Allocator,
+    io: std.Io,
     config: DownloadConfig,
     output_path: []const u8,
 ) !void {
@@ -136,7 +136,7 @@ pub fn downloadModelToFile(
     var file_writer = file.writer(&file_buffer);
     defer file_writer.interface.flush() catch {};
 
-    try downloadModelToWriter(allocator, config, &file_writer.interface);
+    try downloadModelToWriter(allocator, io, config, &file_writer.interface);
 }
 
 /// Download a model from Hugging Face and write it to a writer
@@ -158,6 +158,7 @@ pub fn downloadModelToFile(
 /// ```
 pub fn downloadModelToWriter(
     allocator: Allocator,
+    io: std.Io,
     config: DownloadConfig,
     writer: *std.Io.Writer,
 ) !void {
@@ -173,7 +174,7 @@ pub fn downloadModelToWriter(
     defer if (should_free_token) allocator.free(hf_token);
 
     // Request XET token from Hugging Face Hub
-    var xet_token = try requestXetToken(allocator, config, hf_token);
+    var xet_token = try requestXetToken(allocator, io, config, hf_token);
     defer xet_token.deinit();
 
     // Convert file hash from API hex format to binary
@@ -182,6 +183,7 @@ pub fn downloadModelToWriter(
     // Initialize CAS client
     var cas = try cas_client.CasClient.init(
         allocator,
+        io,
         xet_token.cas_url,
         xet_token.access_token,
     );
@@ -217,6 +219,7 @@ pub fn downloadModelToWriter(
 /// ```
 pub fn downloadModel(
     allocator: Allocator,
+    io: std.Io,
     config: DownloadConfig,
 ) ![]u8 {
     // Get HF token (from config or environment)
@@ -231,7 +234,7 @@ pub fn downloadModel(
     defer if (should_free_token) allocator.free(hf_token);
 
     // Request XET token from Hugging Face Hub
-    var xet_token = try requestXetToken(allocator, config, hf_token);
+    var xet_token = try requestXetToken(allocator, io, config, hf_token);
     defer xet_token.deinit();
 
     // Convert file hash from API hex format to binary
@@ -240,6 +243,7 @@ pub fn downloadModel(
     // Initialize CAS client
     var cas = try cas_client.CasClient.init(
         allocator,
+        io,
         xet_token.cas_url,
         xet_token.access_token,
     );

@@ -53,10 +53,14 @@ pub fn main() !void {
 
     try stdout.flush();
 
+    var io_instance = std.Io.Threaded.init(allocator);
+    defer io_instance.deinit();
+    const io = io_instance.io();
+
     const start_time = try std.time.Instant.now();
 
     // Download the model using the high-level API
-    xet.model_download.downloadModelToFile(allocator, config, output_path) catch |err| {
+    xet.model_download.downloadModelToFile(allocator, io, config, output_path) catch |err| {
         try stderr.print("\nError: Download failed: {}\n", .{err});
         if (err == error.FileNotFound) {
             try stderr.print("Make sure HF_TOKEN environment variable is set.\n", .{});
