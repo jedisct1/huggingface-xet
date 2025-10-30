@@ -133,22 +133,43 @@ pub fn applyByteGrouping(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
     const result = try allocator.alloc(u8, data.len);
     errdefer allocator.free(result);
 
-    const full_groups = data.len / 4;
-    const remaining = data.len % 4;
+    const n = data.len;
+    const split = n / 4;
+    const rem = n % 4;
 
-    var group_idx: usize = 0;
-    while (group_idx < full_groups) : (group_idx += 1) {
-        const base_in = group_idx * 4;
-        for (0..4) |byte_pos| {
-            const out_idx = byte_pos * full_groups + group_idx;
-            result[out_idx] = data[base_in + byte_pos];
-        }
+    // Calculate group sizes based on remainder
+    const g0_size = split + @min(1, rem);
+    const g1_size = split + @min(1, if (rem >= 1) rem - 1 else 0);
+    const g2_size = split + @min(1, if (rem >= 2) rem - 2 else 0);
+
+    // Group offsets in output buffer
+    const g1_offset = g0_size;
+    const g2_offset = g1_offset + g1_size;
+    const g3_offset = g2_offset + g2_size;
+
+    // Fill the full groups
+    for (0..split) |i| {
+        result[i] = data[4 * i];
+        result[g1_offset + i] = data[4 * i + 1];
+        result[g2_offset + i] = data[4 * i + 2];
+        result[g3_offset + i] = data[4 * i + 3];
     }
 
-    for (0..remaining) |i| {
-        const in_idx = full_groups * 4 + i;
-        const out_idx = full_groups * 4 + i;
-        result[out_idx] = data[in_idx];
+    // Handle remainder bytes
+    switch (rem) {
+        1 => {
+            result[split] = data[4 * split];
+        },
+        2 => {
+            result[split] = data[4 * split];
+            result[g1_offset + split] = data[4 * split + 1];
+        },
+        3 => {
+            result[split] = data[4 * split];
+            result[g1_offset + split] = data[4 * split + 1];
+            result[g2_offset + split] = data[4 * split + 2];
+        },
+        else => {},
     }
 
     return result;
@@ -158,22 +179,43 @@ pub fn reverseByteGrouping(allocator: std.mem.Allocator, data: []const u8) ![]u8
     const result = try allocator.alloc(u8, data.len);
     errdefer allocator.free(result);
 
-    const full_groups = data.len / 4;
-    const remaining = data.len % 4;
+    const n = data.len;
+    const split = n / 4;
+    const rem = n % 4;
 
-    var group_idx: usize = 0;
-    while (group_idx < full_groups) : (group_idx += 1) {
-        for (0..4) |byte_pos| {
-            const in_idx = byte_pos * full_groups + group_idx;
-            const out_idx = group_idx * 4 + byte_pos;
-            result[out_idx] = data[in_idx];
-        }
+    // Calculate group sizes based on remainder
+    const g0_size = split + @min(1, rem);
+    const g1_size = split + @min(1, if (rem >= 1) rem - 1 else 0);
+    const g2_size = split + @min(1, if (rem >= 2) rem - 2 else 0);
+
+    // Group offsets in input buffer
+    const g1_offset = g0_size;
+    const g2_offset = g1_offset + g1_size;
+    const g3_offset = g2_offset + g2_size;
+
+    // Regroup the full groups
+    for (0..split) |i| {
+        result[4 * i] = data[i];
+        result[4 * i + 1] = data[g1_offset + i];
+        result[4 * i + 2] = data[g2_offset + i];
+        result[4 * i + 3] = data[g3_offset + i];
     }
 
-    for (0..remaining) |i| {
-        const in_idx = full_groups * 4 + i;
-        const out_idx = full_groups * 4 + i;
-        result[out_idx] = data[in_idx];
+    // Handle remainder bytes
+    switch (rem) {
+        1 => {
+            result[4 * split] = data[split];
+        },
+        2 => {
+            result[4 * split] = data[split];
+            result[4 * split + 1] = data[g1_offset + split];
+        },
+        3 => {
+            result[4 * split] = data[split];
+            result[4 * split + 1] = data[g1_offset + split];
+            result[4 * split + 2] = data[g2_offset + split];
+        },
+        else => {},
     }
 
     return result;
@@ -216,13 +258,19 @@ test "byte grouping with 4-byte aligned data" {
 test "byte grouping with non-aligned data" {
     const allocator = std.testing.allocator;
     // 10 bytes = 2 full groups (8 bytes) + 2 remaining
+    // Input: [1,2,3,4,5,6,7,8,9,10]
     const data = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
 
     const grouped = try applyByteGrouping(allocator, &data);
     defer allocator.free(grouped);
 
-    // First 8 bytes get grouped, last 2 stay at end
-    const expected = [_]u8{ 1, 5, 2, 6, 3, 7, 4, 8, 9, 10 };
+    // split=2, rem=2
+    // g0: [1,5,9] (size=3)
+    // g1: [2,6,10] (size=3)
+    // g2: [3,7] (size=2)
+    // g3: [4,8] (size=2)
+    // Concatenated: [1,5,9,2,6,10,3,7,4,8]
+    const expected = [_]u8{ 1, 5, 9, 2, 6, 10, 3, 7, 4, 8 };
     try std.testing.expectEqualSlices(u8, &expected, grouped);
 }
 
@@ -342,4 +390,117 @@ test "LZ4 compression with small data" {
 
     // Verify round trip works
     try std.testing.expectEqualSlices(u8, original, decompressed);
+}
+
+test "byte grouping with remainder 1" {
+    const allocator = std.testing.allocator;
+    // 13 bytes = 3 full groups (12 bytes) + 1 remaining
+    const data = [_]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 };
+
+    const grouped = try applyByteGrouping(allocator, &data);
+    defer allocator.free(grouped);
+
+    // split=3, rem=1
+    // g0: [0,4,8,12] (size=4)
+    // g1: [1,5,9] (size=3)
+    // g2: [2,6,10] (size=3)
+    // g3: [3,7,11] (size=3)
+    const expected = [_]u8{ 0, 4, 8, 12, 1, 5, 9, 2, 6, 10, 3, 7, 11 };
+    try std.testing.expectEqualSlices(u8, &expected, grouped);
+
+    // Verify round trip
+    const ungrouped = try reverseByteGrouping(allocator, grouped);
+    defer allocator.free(ungrouped);
+    try std.testing.expectEqualSlices(u8, &data, ungrouped);
+}
+
+test "byte grouping with remainder 3" {
+    const allocator = std.testing.allocator;
+    // 15 bytes = 3 full groups (12 bytes) + 3 remaining
+    const data = [_]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14 };
+
+    const grouped = try applyByteGrouping(allocator, &data);
+    defer allocator.free(grouped);
+
+    // split=3, rem=3
+    // g0: [0,4,8,12] (size=4)
+    // g1: [1,5,9,13] (size=4)
+    // g2: [2,6,10,14] (size=4)
+    // g3: [3,7,11] (size=3)
+    const expected = [_]u8{ 0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11 };
+    try std.testing.expectEqualSlices(u8, &expected, grouped);
+
+    // Verify round trip
+    const ungrouped = try reverseByteGrouping(allocator, grouped);
+    defer allocator.free(ungrouped);
+    try std.testing.expectEqualSlices(u8, &data, ungrouped);
+}
+
+test "byte grouping large data round trip" {
+    const allocator = std.testing.allocator;
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Test with different sizes matching Rust test suite
+    const sizes = [_]usize{
+        64 * 1024,        // 65536 - aligned
+        64 * 1024 - 53,   // 65483 - rem=3
+        64 * 1024 + 135,  // 65671 - rem=3
+        1000,             // Small size
+        1,                // Single byte
+        7,                // rem=3
+    };
+
+    for (sizes) |size| {
+        const data = try allocator.alloc(u8, size);
+        defer allocator.free(data);
+        random.bytes(data);
+
+        const grouped = try applyByteGrouping(allocator, data);
+        defer allocator.free(grouped);
+
+        const ungrouped = try reverseByteGrouping(allocator, grouped);
+        defer allocator.free(ungrouped);
+
+        try std.testing.expectEqualSlices(u8, data, ungrouped);
+    }
+}
+
+test "ByteGrouping4LZ4 with model-like data" {
+    const allocator = std.testing.allocator;
+    // Simulate float32 data (4 bytes per float) with patterns
+    // This is similar to what model weights look like
+    var data = try allocator.alloc(u8, 1024);
+    defer allocator.free(data);
+
+    // Fill with pattern: little-endian float-like values
+    for (0..256) |i| {
+        const idx = i * 4;
+        data[idx] = @truncate(i);
+        data[idx + 1] = 0;
+        data[idx + 2] = 0;
+        data[idx + 3] = 0x3F; // Sign/exponent bits
+    }
+
+    // Compress with regular LZ4
+    const lz4_result = try compress(allocator, data, .LZ4);
+    defer allocator.free(lz4_result.data);
+
+    // Compress with ByteGrouping4LZ4
+    const bg4_result = try compress(allocator, data, .ByteGrouping4LZ4);
+    defer allocator.free(bg4_result.data);
+
+    // ByteGrouping4LZ4 should compress better for this pattern
+    try std.testing.expect(bg4_result.data.len < lz4_result.data.len);
+
+    // Verify decompression works correctly
+    const decompressed = try decompress(
+        allocator,
+        bg4_result.data,
+        bg4_result.type,
+        data.len,
+    );
+    defer allocator.free(decompressed);
+
+    try std.testing.expectEqualSlices(u8, data, decompressed);
 }

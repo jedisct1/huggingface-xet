@@ -31,4 +31,5 @@ pub const benchmark = @import("benchmark.zig");
 test {
     std.testing.refAllDecls(@This());
     _ = @import("verification_test.zig");
+    _ = @import("bg4_verification_test.zig");
 }
