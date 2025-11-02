@@ -191,6 +191,26 @@ pub fn build(b: *std.Build) void {
     download_step.dependOn(&run_download.step);
     run_download.step.dependOn(b.getInstallStep());
 
+    // Example: Download model with parallel fetching
+    const download_parallel_example = b.addExecutable(.{
+        .name = "download_model_parallel",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/download_model_parallel.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "xet", .module = mod },
+            },
+        }),
+    });
+
+    b.installArtifact(download_parallel_example);
+
+    const download_parallel_step = b.step("run-example-parallel", "Run parallel model download example (requires HF_TOKEN env var)");
+    const run_download_parallel = b.addRunArtifact(download_parallel_example);
+    download_parallel_step.dependOn(&run_download_parallel.step);
+    run_download_parallel.step.dependOn(b.getInstallStep());
+
     // Just like flags, top level steps are also listed in the `--help` menu.
     //
     // The Zig build system is entirely implemented in userland, which means

@@ -194,6 +194,85 @@ pub fn downloadModelToWriter(
     try reconstructor.reconstructStream(file_hash, writer);
 }
 
+/// Download a model from Hugging Face and write it to a writer using parallel fetching
+///
+/// This is similar to downloadModelToWriter() but uses parallel chunk fetching for better performance.
+///
+/// Parameters:
+/// - allocator: Memory allocator
+/// - config: Download configuration (repository, file hash, etc.)
+/// - writer: Writer to receive the reconstructed file data
+/// - num_threads: Number of worker threads (null = use CPU count)
+/// - compute_hashes: Whether to compute hashes during fetching
+pub fn downloadModelToWriterParallel(
+    allocator: Allocator,
+    io: std.Io,
+    config: DownloadConfig,
+    writer: *std.Io.Writer,
+    num_threads: ?usize,
+    compute_hashes: bool,
+) !void {
+    // Get HF token (from config or environment)
+    const hf_token = if (config.hf_token) |token|
+        token
+    else blk: {
+        const token = try std.process.getEnvVarOwned(allocator, "HF_TOKEN");
+        errdefer allocator.free(token);
+        break :blk token;
+    };
+    const should_free_token = config.hf_token == null;
+    defer if (should_free_token) allocator.free(hf_token);
+
+    // Request XET token from Hugging Face Hub
+    var xet_token = try requestXetToken(allocator, io, config, hf_token);
+    defer xet_token.deinit();
+
+    // Convert file hash from API hex format to binary
+    const file_hash = try cas_client.apiHexToHash(config.file_hash_hex);
+
+    // Initialize CAS client
+    var cas = try cas_client.CasClient.init(
+        allocator,
+        io,
+        xet_token.cas_url,
+        xet_token.access_token,
+    );
+    defer cas.deinit();
+
+    // Reconstruct file using parallel stream API
+    var reconstructor = reconstruction.FileReconstructor.init(allocator, &cas);
+    try reconstructor.reconstructStreamParallel(file_hash, writer, num_threads, compute_hashes);
+}
+
+/// Download a model from Hugging Face and write it to a file using parallel fetching
+///
+/// This is similar to downloadModelToFile() but uses parallel chunk fetching for better performance.
+///
+/// Parameters:
+/// - allocator: Memory allocator
+/// - config: Download configuration (repository, file hash, etc.)
+/// - output_path: Path where the file will be saved
+/// - num_threads: Number of worker threads (null = use CPU count)
+/// - compute_hashes: Whether to compute hashes during fetching
+pub fn downloadModelToFileParallel(
+    allocator: Allocator,
+    io: std.Io,
+    config: DownloadConfig,
+    output_path: []const u8,
+    num_threads: ?usize,
+    compute_hashes: bool,
+) !void {
+    // Open output file for writing
+    const file = try std.fs.cwd().createFile(output_path, .{});
+    defer file.close();
+
+    var file_buffer: [4096]u8 = undefined;
+    var file_writer = file.writer(&file_buffer);
+    defer file_writer.interface.flush() catch {};
+
+    try downloadModelToWriterParallel(allocator, io, config, &file_writer.interface, num_threads, compute_hashes);
+}
+
 /// Download a model from Hugging Face and return it as owned memory
 ///
 /// This function downloads the entire model into memory and returns it as a slice.

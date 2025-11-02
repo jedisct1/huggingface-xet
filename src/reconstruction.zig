@@ -3,6 +3,7 @@ const Allocator = std.mem.Allocator;
 const cas_client = @import("cas_client.zig");
 const xorb = @import("xorb.zig");
 const shard = @import("shard.zig");
+const parallel_fetcher = @import("parallel_fetcher.zig");
 
 /// File reconstruction module
 ///
@@ -188,6 +189,32 @@ pub const FileReconstructor = struct {
 
             try writer.writeAll(chunk_data);
         }
+    }
+
+    /// Parallel stream reconstruction - reconstruct file and write to writer using parallel fetching
+    /// num_threads: Number of worker threads (null = use CPU count)
+    /// compute_hashes: Whether to compute hashes during fetching
+    pub fn reconstructStreamParallel(
+        self: *FileReconstructor,
+        file_hash: [32]u8,
+        writer: *std.Io.Writer,
+        num_threads: ?usize,
+        compute_hashes: bool,
+    ) !void {
+        const recon = try self.cas.getReconstruction(file_hash, null);
+        defer {
+            var mut_recon = recon;
+            mut_recon.deinit();
+        }
+
+        var fetcher = parallel_fetcher.ParallelFetcher.init(
+            self.allocator,
+            self.cas,
+            num_threads,
+            compute_hashes,
+        );
+
+        try fetcher.fetchAndWrite(recon.terms, recon.fetch_info, writer);
     }
 };
 
