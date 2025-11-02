@@ -20,6 +20,7 @@ This library implements the full XET protocol spec in Zig, including:
 - Xorb format for serializing chunked data
 - MDB shard format for metadata storage
 - CAS client for downloading files from HuggingFace
+- Parallel chunk fetching, decompression, and hashing using thread pools
 
 The implementation has been cross-verified against the Rust reference implementation to ensure correctness.
 
@@ -54,11 +55,14 @@ The most common use case is downloading models efficiently:
 # Set your HuggingFace token
 export HF_TOKEN="your_token_here"
 
-# Run the download example
+# Run the download example (sequential)
 zig build run-example-download
+
+# Run the parallel download example (faster for large files)
+zig build run-example-parallel
 ```
 
-This downloads a model using the XET protocol, which handles all the chunking, deduplication, and reconstruction automatically.
+The parallel version uses multiple threads to fetch, decompress, and hash chunks simultaneously, providing significant performance improvements for large models.
 
 ### Using as a library
 
@@ -75,6 +79,7 @@ Add to your `build.zig.zon`:
 Then in your code:
 
 ```zig
+const std = @import("std");
 const xet = @import("xet");
 
 // Chunk a file using content-defined chunking
@@ -87,14 +92,28 @@ const hash = xet.hashing.computeDataHash(chunk_data);
 // Build a Merkle tree for verification
 const merkle_root = try xet.hashing.buildMerkleTree(allocator, &nodes);
 
-// Download a model from HuggingFace
+// Download a model from HuggingFace (sequential)
+var io_instance = std.Io.Threaded.init(allocator);
+defer io_instance.deinit();
+const io = io_instance.io();
+
 const config = xet.model_download.DownloadConfig{
     .repo_id = "org/model",
     .repo_type = "model",
     .revision = "main",
     .file_hash_hex = "...",
 };
-try xet.model_download.downloadModelToFile(allocator, config, "output.gguf");
+try xet.model_download.downloadModelToFile(allocator, io, config, "output.gguf");
+
+// Or download with parallel fetching (faster for large files)
+try xet.model_download.downloadModelToFileParallel(
+    allocator,
+    io,
+    config,
+    "output.gguf",
+    null,  // Use CPU count for threads
+    false, // Don't compute hashes during download
+);
 ```
 
 ## How it works
@@ -111,7 +130,16 @@ The XET protocol processes files in several stages:
 
 5. Storage: Chunks are bundled into "xorbs" and metadata is stored in "MDB shards" for efficient retrieval.
 
-When downloading from HuggingFace, the library queries the CAS (content-addressable storage) API to find which chunks are needed, fetches them, decompresses, and reconstructs the original file.
+When downloading from HuggingFace, the library queries the CAS (content-addressable storage) API to find which chunks are needed, fetches them (optionally in parallel using a thread pool), decompresses, and reconstructs the original file.
+
+### Performance
+
+The parallel fetching implementation uses a thread pool to simultaneously:
+- Download chunks via HTTP
+- Decompress chunks
+- Compute BLAKE3 hashes
+
+This provides significant speedup for large models, especially on multi-core systems with good network bandwidth.
 
 ## Protocol compliance
 
