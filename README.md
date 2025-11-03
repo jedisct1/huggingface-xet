@@ -24,6 +24,8 @@ This library implements the full XET protocol spec in Zig, including:
 
 The implementation has been cross-verified against the Rust reference implementation to ensure correctness.
 
+It can be compiled to WebAssembly, but runs at about 45% of the native speed.
+
 ## Quick start
 
 ### Requirements
