@@ -1,9 +1,13 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
-const cas_client = @import("cas_client.zig");
 const xorb = @import("xorb.zig");
 const shard = @import("shard.zig");
-const parallel_fetcher = @import("parallel_fetcher.zig");
+
+// Network-dependent imports only for non-WASM targets
+const has_network = builtin.target.os.tag != .wasi;
+const cas_client = if (has_network) @import("cas_client.zig") else struct {};
+const parallel_fetcher = if (has_network) @import("parallel_fetcher.zig") else struct {};
 
 /// File reconstruction module
 ///
@@ -15,14 +19,18 @@ const parallel_fetcher = @import("parallel_fetcher.zig");
 /// 2. For each term, download the xorb from the fetch_info URL
 /// 3. Extract the specified chunk range from the xorb
 /// 4. Assemble chunks in order to reconstruct the file
-const XorbData = struct {
+///
+/// Note: FileReconstructor is only available on platforms with network support (not WASM)
+
+// Helper type for xorb data (only needed when network support is available)
+const XorbData = if (has_network) struct {
     data: []u8,
     local_start: u32,
     local_end: u32,
-};
+} else struct {};
 
-/// File reconstructor - reconstructs files from CAS
-pub const FileReconstructor = struct {
+// Only compile FileReconstructor on non-WASM targets
+pub const FileReconstructor = if (has_network) struct {
     allocator: Allocator,
     cas: *cas_client.CasClient,
 
@@ -99,29 +107,6 @@ pub const FileReconstructor = struct {
         }
 
         return result;
-    }
-
-    fn copyTermIntoRange(
-        result: []u8,
-        term_data: []const u8,
-        pending_skip: *usize,
-        result_offset: *usize,
-        remaining: *usize,
-    ) void {
-        if (remaining.* == 0) return;
-
-        var slice = term_data;
-        if (pending_skip.* != 0) {
-            const skip = @min(pending_skip.*, slice.len);
-            slice = slice[skip..];
-            pending_skip.* -= skip;
-            if (slice.len == 0) return;
-        }
-
-        const to_copy = @min(slice.len, remaining.*);
-        @memcpy(result[result_offset.*..][0..to_copy], slice[0..to_copy]);
-        result_offset.* += to_copy;
-        remaining.* -= to_copy;
     }
 
     /// Reconstruct a range of bytes from a file
@@ -216,7 +201,31 @@ pub const FileReconstructor = struct {
 
         try fetcher.fetchAndWrite(recon.terms, recon.fetch_info, writer);
     }
-};
+} else struct {};
+
+// Helper function for tests - exposed regardless of network support
+fn copyTermIntoRange(
+    result: []u8,
+    term_data: []const u8,
+    pending_skip: *usize,
+    result_offset: *usize,
+    remaining: *usize,
+) void {
+    if (remaining.* == 0) return;
+
+    var slice = term_data;
+    if (pending_skip.* != 0) {
+        const skip = @min(pending_skip.*, slice.len);
+        slice = slice[skip..];
+        pending_skip.* -= skip;
+        if (slice.len == 0) return;
+    }
+
+    const to_copy = @min(slice.len, remaining.*);
+    @memcpy(result[result_offset.*..][0..to_copy], slice[0..to_copy]);
+    result_offset.* += to_copy;
+    remaining.* -= to_copy;
+}
 
 // Tests
 test "xorb reader - extract chunk range" {
@@ -314,14 +323,14 @@ test "copyTermIntoRange applies skip and truncation" {
     var remaining: usize = result.len;
 
     const term_a = "abcdef";
-    FileReconstructor.copyTermIntoRange(result, term_a, &pending_skip, &result_offset, &remaining);
+    copyTermIntoRange(result, term_a, &pending_skip, &result_offset, &remaining);
     try std.testing.expectEqual(@as(usize, 0), pending_skip);
     try std.testing.expectEqual(@as(usize, 3), result_offset);
     try std.testing.expectEqual(@as(usize, 2), remaining);
     try std.testing.expectEqualSlices(u8, "def", result[0..result_offset]);
 
     const term_b = "ghij";
-    FileReconstructor.copyTermIntoRange(result, term_b, &pending_skip, &result_offset, &remaining);
+    copyTermIntoRange(result, term_b, &pending_skip, &result_offset, &remaining);
     try std.testing.expectEqual(@as(usize, 0), remaining);
     try std.testing.expectEqualSlices(u8, "defgh", result[0..result_offset]);
 }

@@ -171,45 +171,51 @@ pub fn build(b: *std.Build) void {
     bench_step.dependOn(&run_bench.step);
     run_bench.step.dependOn(b.getInstallStep());
 
-    // Example: Download model from Hugging Face
-    const download_example = b.addExecutable(.{
-        .name = "download_model",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("examples/download_model.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "xet", .module = mod },
-            },
-        }),
-    });
+    // Network-dependent examples
+    const target_resolved = target.result.os.tag;
+    const is_wasm = target_resolved == .wasi;
 
-    b.installArtifact(download_example);
+    if (!is_wasm) {
+        // Example: Download model from Hugging Face
+        const download_example = b.addExecutable(.{
+            .name = "download_model",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("examples/download_model.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "xet", .module = mod },
+                },
+            }),
+        });
 
-    const download_step = b.step("run-example-download", "Run model download example (requires HF_TOKEN env var)");
-    const run_download = b.addRunArtifact(download_example);
-    download_step.dependOn(&run_download.step);
-    run_download.step.dependOn(b.getInstallStep());
+        b.installArtifact(download_example);
 
-    // Example: Download model with parallel fetching
-    const download_parallel_example = b.addExecutable(.{
-        .name = "download_model_parallel",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("examples/download_model_parallel.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "xet", .module = mod },
-            },
-        }),
-    });
+        const download_step = b.step("run-example-download", "Run model download example (requires HF_TOKEN env var)");
+        const run_download = b.addRunArtifact(download_example);
+        download_step.dependOn(&run_download.step);
+        run_download.step.dependOn(b.getInstallStep());
 
-    b.installArtifact(download_parallel_example);
+        // Example: Download model with parallel fetching
+        const download_parallel_example = b.addExecutable(.{
+            .name = "download_model_parallel",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("examples/download_model_parallel.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "xet", .module = mod },
+                },
+            }),
+        });
 
-    const download_parallel_step = b.step("run-example-parallel", "Run parallel model download example (requires HF_TOKEN env var)");
-    const run_download_parallel = b.addRunArtifact(download_parallel_example);
-    download_parallel_step.dependOn(&run_download_parallel.step);
-    run_download_parallel.step.dependOn(b.getInstallStep());
+        b.installArtifact(download_parallel_example);
+
+        const download_parallel_step = b.step("run-example-parallel", "Run parallel model download example (requires HF_TOKEN env var)");
+        const run_download_parallel = b.addRunArtifact(download_parallel_example);
+        download_parallel_step.dependOn(&run_download_parallel.step);
+        run_download_parallel.step.dependOn(b.getInstallStep());
+    }
 
     // Just like flags, top level steps are also listed in the `--help` menu.
     //

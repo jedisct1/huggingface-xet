@@ -46,7 +46,7 @@ fn generateRandomData(allocator: std.mem.Allocator, size: usize, seed: u64) ![]u
 }
 
 pub fn benchmarkChunking(allocator: std.mem.Allocator) !BenchmarkResult {
-    const data_size = 10 * 1024 * 1024; // 10 MB
+    const data_size = 100 * 1024 * 1024; // 100 MB
     const data = try generateRandomData(allocator, data_size, 12345);
     defer allocator.free(data);
 
@@ -59,10 +59,12 @@ pub fn benchmarkChunking(allocator: std.mem.Allocator) !BenchmarkResult {
     const end = timer.read();
     const duration = end - start;
 
+    std.mem.doNotOptimizeAway(&boundaries);
+
     const throughput = (@as(f64, @floatFromInt(data_size)) / @as(f64, @floatFromInt(duration))) * 1_000_000_000.0 / (1024.0 * 1024.0);
 
     return BenchmarkResult{
-        .name = "Chunking (10 MB)",
+        .name = "Chunking (100 MB)",
         .duration_ns = duration,
         .throughput_mbs = throughput,
         .iterations = 1,
@@ -70,7 +72,7 @@ pub fn benchmarkChunking(allocator: std.mem.Allocator) !BenchmarkResult {
 }
 
 pub fn benchmarkHashing(allocator: std.mem.Allocator) !BenchmarkResult {
-    const data_size = 10 * 1024 * 1024; // 10 MB
+    const data_size = 100 * 1024 * 1024; // 100 MB
     const data = try generateRandomData(allocator, data_size, 54321);
     defer allocator.free(data);
 
@@ -78,15 +80,16 @@ pub fn benchmarkHashing(allocator: std.mem.Allocator) !BenchmarkResult {
     const start = timer.read();
 
     const hash = hashing.computeDataHash(data);
-    _ = hash;
 
     const end = timer.read();
     const duration = end - start;
 
+    std.mem.doNotOptimizeAway(&hash);
+
     const throughput = (@as(f64, @floatFromInt(data_size)) / @as(f64, @floatFromInt(duration))) * 1_000_000_000.0 / (1024.0 * 1024.0);
 
     return BenchmarkResult{
-        .name = "BLAKE3 Hashing (10 MB)",
+        .name = "BLAKE3 Hashing (100 MB)",
         .duration_ns = duration,
         .throughput_mbs = throughput,
         .iterations = 1,
@@ -113,10 +116,11 @@ pub fn benchmarkMerkleTree(allocator: std.mem.Allocator) !BenchmarkResult {
 
     const merkle_root = try hashing.buildMerkleTree(allocator, chunk_infos.items);
     const file_hash = hashing.computeFileHash(merkle_root);
-    _ = file_hash;
 
     const end = timer.read();
     const duration = end - start;
+
+    std.mem.doNotOptimizeAway(&file_hash);
 
     return BenchmarkResult{
         .name = "Merkle Tree (100 chunks)",
@@ -127,7 +131,7 @@ pub fn benchmarkMerkleTree(allocator: std.mem.Allocator) !BenchmarkResult {
 }
 
 pub fn benchmarkLZ4Compression(allocator: std.mem.Allocator) !BenchmarkResult {
-    const data_size = 1024 * 1024; // 1 MB
+    const data_size = 50 * 1024 * 1024; // 50 MB
     const data = try generateRandomData(allocator, data_size, 98765);
     defer allocator.free(data);
 
@@ -140,10 +144,12 @@ pub fn benchmarkLZ4Compression(allocator: std.mem.Allocator) !BenchmarkResult {
     const end = timer.read();
     const duration = end - start;
 
+    std.mem.doNotOptimizeAway(&result);
+
     const throughput = (@as(f64, @floatFromInt(data_size)) / @as(f64, @floatFromInt(duration))) * 1_000_000_000.0 / (1024.0 * 1024.0);
 
     return BenchmarkResult{
-        .name = "LZ4 Compression (1 MB)",
+        .name = "LZ4 Compression (50 MB)",
         .duration_ns = duration,
         .throughput_mbs = throughput,
         .iterations = 1,
@@ -151,7 +157,7 @@ pub fn benchmarkLZ4Compression(allocator: std.mem.Allocator) !BenchmarkResult {
 }
 
 pub fn benchmarkLZ4Decompression(allocator: std.mem.Allocator) !BenchmarkResult {
-    const data_size = 1024 * 1024; // 1 MB
+    const data_size = 50 * 1024 * 1024; // 50 MB
     const data = try generateRandomData(allocator, data_size, 98765);
     defer allocator.free(data);
 
@@ -167,10 +173,12 @@ pub fn benchmarkLZ4Decompression(allocator: std.mem.Allocator) !BenchmarkResult 
     const end = timer.read();
     const duration = end - start;
 
+    std.mem.doNotOptimizeAway(&decompressed);
+
     const throughput = (@as(f64, @floatFromInt(data_size)) / @as(f64, @floatFromInt(duration))) * 1_000_000_000.0 / (1024.0 * 1024.0);
 
     return BenchmarkResult{
-        .name = "LZ4 Decompression (1 MB)",
+        .name = "LZ4 Decompression (50 MB)",
         .duration_ns = duration,
         .throughput_mbs = throughput,
         .iterations = 1,
@@ -178,7 +186,7 @@ pub fn benchmarkLZ4Decompression(allocator: std.mem.Allocator) !BenchmarkResult 
 }
 
 pub fn benchmarkByteGrouping4LZ4(allocator: std.mem.Allocator) !BenchmarkResult {
-    const data_size = 1024 * 1024; // 1 MB
+    const data_size = 50 * 1024 * 1024; // 50 MB
     // Create structured data (array of integers) for better compression
     const data = try allocator.alloc(u8, data_size);
     defer allocator.free(data);
@@ -198,10 +206,12 @@ pub fn benchmarkByteGrouping4LZ4(allocator: std.mem.Allocator) !BenchmarkResult 
     const end = timer.read();
     const duration = end - start;
 
+    std.mem.doNotOptimizeAway(&result);
+
     const throughput = (@as(f64, @floatFromInt(data_size)) / @as(f64, @floatFromInt(duration))) * 1_000_000_000.0 / (1024.0 * 1024.0);
 
     return BenchmarkResult{
-        .name = "ByteGrouping4LZ4 (1 MB)",
+        .name = "ByteGrouping4LZ4 (50 MB)",
         .duration_ns = duration,
         .throughput_mbs = throughput,
         .iterations = 1,
@@ -209,7 +219,7 @@ pub fn benchmarkByteGrouping4LZ4(allocator: std.mem.Allocator) !BenchmarkResult 
 }
 
 pub fn benchmarkXorbSerialization(allocator: std.mem.Allocator) !BenchmarkResult {
-    const data_size = 1024 * 1024; // 1 MB
+    const data_size = 50 * 1024 * 1024; // 50 MB
     const data = try generateRandomData(allocator, data_size, 11111);
     defer allocator.free(data);
 
@@ -235,10 +245,12 @@ pub fn benchmarkXorbSerialization(allocator: std.mem.Allocator) !BenchmarkResult
     const end = timer.read();
     const duration = end - start;
 
+    std.mem.doNotOptimizeAway(&serialized);
+
     const throughput = (@as(f64, @floatFromInt(data_size)) / @as(f64, @floatFromInt(duration))) * 1_000_000_000.0 / (1024.0 * 1024.0);
 
     return BenchmarkResult{
-        .name = "Xorb Serialization (1 MB)",
+        .name = "Xorb Serialization (50 MB)",
         .duration_ns = duration,
         .throughput_mbs = throughput,
         .iterations = 1,
@@ -246,7 +258,7 @@ pub fn benchmarkXorbSerialization(allocator: std.mem.Allocator) !BenchmarkResult
 }
 
 pub fn benchmarkEndToEnd(allocator: std.mem.Allocator) !BenchmarkResult {
-    const data_size = 5 * 1024 * 1024; // 5 MB
+    const data_size = 50 * 1024 * 1024; // 50 MB
     const data = try generateRandomData(allocator, data_size, 99999);
     defer allocator.free(data);
 
@@ -273,15 +285,62 @@ pub fn benchmarkEndToEnd(allocator: std.mem.Allocator) !BenchmarkResult {
     // 3. Compute file hash
     const merkle_root = try hashing.buildMerkleTree(allocator, chunk_infos.items);
     const file_hash = hashing.computeFileHash(merkle_root);
-    _ = file_hash;
 
     const end = timer.read();
     const duration = end - start;
 
+    std.mem.doNotOptimizeAway(&file_hash);
+
     const throughput = (@as(f64, @floatFromInt(data_size)) / @as(f64, @floatFromInt(duration))) * 1_000_000_000.0 / (1024.0 * 1024.0);
 
     return BenchmarkResult{
-        .name = "End-to-End (5 MB)",
+        .name = "End-to-End (50 MB)",
+        .duration_ns = duration,
+        .throughput_mbs = throughput,
+        .iterations = 1,
+    };
+}
+
+pub fn benchmarkEndToEndLarge(allocator: std.mem.Allocator) !BenchmarkResult {
+    const data_size = 1024 * 1024 * 1024; // 1 GB
+    std.debug.print("Allocating 1 GB for benchmark...\n", .{});
+    const data = try generateRandomData(allocator, data_size, 99999);
+    defer allocator.free(data);
+
+    std.debug.print("Starting end-to-end benchmark...\n", .{});
+    var timer = try Timer.start();
+    const start = timer.read();
+
+    // 1. Chunk the data
+    var boundaries = try chunking.chunkBuffer(allocator, data);
+    defer boundaries.deinit(allocator);
+
+    // 2. Hash each chunk and build merkle tree
+    var chunk_infos = std.ArrayList(hashing.MerkleNode).empty;
+    defer chunk_infos.deinit(allocator);
+
+    for (boundaries.items) |boundary| {
+        const chunk = data[boundary.start..boundary.end];
+        const chunk_hash = hashing.computeDataHash(chunk);
+        try chunk_infos.append(allocator, .{
+            .hash = chunk_hash,
+            .size = @as(u64, @intCast(chunk.len)),
+        });
+    }
+
+    // 3. Compute file hash
+    const merkle_root = try hashing.buildMerkleTree(allocator, chunk_infos.items);
+    const file_hash = hashing.computeFileHash(merkle_root);
+
+    const end = timer.read();
+    const duration = end - start;
+
+    std.mem.doNotOptimizeAway(&file_hash);
+
+    const throughput = (@as(f64, @floatFromInt(data_size)) / @as(f64, @floatFromInt(duration))) * 1_000_000_000.0 / (1024.0 * 1024.0);
+
+    return BenchmarkResult{
+        .name = "End-to-End (1 GB)",
         .duration_ns = duration,
         .throughput_mbs = throughput,
         .iterations = 1,
@@ -303,6 +362,7 @@ pub fn runAllBenchmarks(allocator: std.mem.Allocator) !void {
         .{ .name = "ByteGrouping4LZ4", .func = benchmarkByteGrouping4LZ4 },
         .{ .name = "Xorb Serialization", .func = benchmarkXorbSerialization },
         .{ .name = "End-to-End", .func = benchmarkEndToEnd },
+        .{ .name = "End-to-End Large", .func = benchmarkEndToEndLarge },
     };
 
     for (benchmarks) |bench| {
