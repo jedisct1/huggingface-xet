@@ -91,12 +91,9 @@ pub fn hashToApiHex(hash: [32]u8, allocator: Allocator) ![]u8 {
     var result = try allocator.alloc(u8, 64);
     errdefer allocator.free(result);
 
-    // Process hash in 8-byte segments, reversing byte order within each segment
     var i: usize = 0;
     while (i < 32) : (i += 8) {
-        // Read 8 bytes as little-endian u64
         const segment = std.mem.readInt(u64, hash[i..][0..8], .little);
-        // Write as hex (16 chars)
         _ = std.fmt.bufPrint(result[i * 2 ..][0..16], "{x:0>16}", .{segment}) catch unreachable;
     }
 

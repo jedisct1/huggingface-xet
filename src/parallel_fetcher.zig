@@ -58,45 +58,28 @@ fn processChunk(ctx: *WorkerContext) !?ChunkResult {
     if (work_item == null) return null;
     const work = work_item.?;
 
-    // Fetch xorb for this term
-    const xorb_data = blk: {
+    // Find matching fetch info once
+    const matching_fetch_info = blk: {
         for (work.fetch_info) |fetch_info| {
             if (fetch_info.range.start <= work.term.range.start and
                 fetch_info.range.end >= work.term.range.end)
             {
-                const data = try ctx.cas.fetchXorbFromUrl(
-                    fetch_info.url,
-                    .{ .start = fetch_info.url_range.start, .end = fetch_info.url_range.end },
-                );
-                break :blk data;
+                break :blk fetch_info;
             }
         }
         return error.NoMatchingFetchInfo;
     };
+
+    // Fetch xorb for this term
+    const xorb_data = try ctx.cas.fetchXorbFromUrl(
+        matching_fetch_info.url,
+        .{ .start = matching_fetch_info.url_range.start, .end = matching_fetch_info.url_range.end },
+    );
     defer ctx.allocator.free(xorb_data);
 
     // Calculate local chunk range
-    const local_start = blk: {
-        for (work.fetch_info) |fetch_info| {
-            if (fetch_info.range.start <= work.term.range.start and
-                fetch_info.range.end >= work.term.range.end)
-            {
-                break :blk work.term.range.start - fetch_info.range.start;
-            }
-        }
-        return error.NoMatchingFetchInfo;
-    };
-
-    const local_end = blk: {
-        for (work.fetch_info) |fetch_info| {
-            if (fetch_info.range.start <= work.term.range.start and
-                fetch_info.range.end >= work.term.range.end)
-            {
-                break :blk work.term.range.end - fetch_info.range.start;
-            }
-        }
-        return error.NoMatchingFetchInfo;
-    };
+    const local_start = work.term.range.start - matching_fetch_info.range.start;
+    const local_end = work.term.range.end - matching_fetch_info.range.start;
 
     // Extract and decompress chunks
     var xorb_reader = xorb.XorbReader.init(ctx.allocator, xorb_data);

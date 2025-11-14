@@ -36,16 +36,12 @@ pub fn hmac(key: [32]u8, message: []const u8) Hash {
 }
 
 pub fn hashToHex(hash: Hash) [64]u8 {
-    // Rust formats hashes as [u64; 4] with each u64 in little-endian format
-    // Read each 8-byte chunk as a little-endian u64, then format as hex
     var result: [64]u8 = undefined;
     var i: usize = 0;
     while (i < 4) : (i += 1) {
         const offset = i * 8;
         const val = std.mem.readInt(u64, hash[offset..][0..8], .little);
-        // Format the u64 value as 16 hex digits (lowercase)
-        const formatted = std.fmt.bufPrint(result[i * 16 ..][0..16], "{x:0>16}", .{val}) catch unreachable;
-        _ = formatted;
+        _ = std.fmt.bufPrint(result[i * 16 ..][0..16], "{x:0>16}", .{val}) catch unreachable;
     }
     return result;
 }
