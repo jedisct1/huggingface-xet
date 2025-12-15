@@ -4,8 +4,8 @@ const xet = @import("xet");
 /// Download a model from Hugging Face using parallel chunk fetching
 ///
 /// This example demonstrates how to use the parallel fetching API to download
-/// models faster by fetching, decompressing, and processing chunks in parallel
-/// using Io.Group for concurrent async operations.
+/// models faster by fetching, decompressing, and processing chunks concurrently
+/// using Io.Group.concurrent for concurrent I/O operations.
 ///
 /// Usage:
 ///   HF_TOKEN=your_token zig build run-example-parallel -- <repo_id> [filename]
@@ -146,7 +146,6 @@ pub fn main() !void {
         download_io,
         config,
         output_path,
-        null, // Use CPU count for thread count
         false,
     );
 

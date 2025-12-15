@@ -177,13 +177,11 @@ pub const FileReconstructor = if (has_network) struct {
     }
 
     /// Parallel stream reconstruction - reconstruct file and write to writer using parallel fetching
-    /// num_threads: Number of worker threads (null = use CPU count)
     /// compute_hashes: Whether to compute hashes during fetching
     pub fn reconstructStreamParallel(
         self: *FileReconstructor,
         file_hash: [32]u8,
         writer: *std.Io.Writer,
-        num_threads: ?usize,
         compute_hashes: bool,
     ) !void {
         const recon = try self.cas.getReconstruction(file_hash, null);
@@ -194,7 +192,7 @@ pub const FileReconstructor = if (has_network) struct {
 
         var fetcher = parallel_fetcher.ParallelFetcher.init(
             self.allocator,
-            num_threads,
+            self.cas.http_client.io,
             compute_hashes,
         );
 

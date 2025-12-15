@@ -409,20 +409,19 @@ pub fn downloadModelToWriter(
 /// Download a model from Hugging Face and write it to a writer using parallel fetching
 ///
 /// This is similar to downloadModelToWriter() but uses parallel chunk fetching for better performance.
-/// Each worker thread has its own IO instance for thread safety.
+/// Uses Io.Group.concurrent for concurrent I/O operations.
 ///
 /// Parameters:
 /// - allocator: Memory allocator
+/// - io: Io instance for concurrent operations
 /// - config: Download configuration (repository, file hash, etc.)
 /// - writer: Writer to receive the reconstructed file data
-/// - num_threads: Number of worker threads (null = use CPU count)
 /// - compute_hashes: Whether to compute hashes during fetching
 pub fn downloadModelToWriterParallel(
     allocator: Allocator,
     io: std.Io,
     config: DownloadConfig,
     writer: *std.Io.Writer,
-    num_threads: ?usize,
     compute_hashes: bool,
 ) !void {
     const hf_token = if (config.hf_token) |token|
@@ -449,26 +448,25 @@ pub fn downloadModelToWriterParallel(
     defer cas.deinit();
 
     var reconstructor = reconstruction.FileReconstructor.init(allocator, &cas);
-    try reconstructor.reconstructStreamParallel(file_hash, writer, num_threads, compute_hashes);
+    try reconstructor.reconstructStreamParallel(file_hash, writer, compute_hashes);
 }
 
 /// Download a model from Hugging Face and write it to a file using parallel fetching
 ///
 /// This is similar to downloadModelToFile() but uses parallel chunk fetching for better performance.
-/// Each worker thread has its own IO instance for thread safety.
+/// Uses Io.Group.concurrent for concurrent I/O operations.
 ///
 /// Parameters:
 /// - allocator: Memory allocator
+/// - io: Io instance for concurrent operations
 /// - config: Download configuration (repository, file hash, etc.)
 /// - output_path: Path where the file will be saved
-/// - num_threads: Number of worker threads (null = use CPU count)
 /// - compute_hashes: Whether to compute hashes during fetching
 pub fn downloadModelToFileParallel(
     allocator: Allocator,
     io: std.Io,
     config: DownloadConfig,
     output_path: []const u8,
-    num_threads: ?usize,
     compute_hashes: bool,
 ) !void {
     const file = try std.fs.cwd().createFile(output_path, .{});
@@ -478,7 +476,7 @@ pub fn downloadModelToFileParallel(
     var file_writer = file.writer(&file_buffer);
     defer file_writer.interface.flush() catch {};
 
-    try downloadModelToWriterParallel(allocator, io, config, &file_writer.interface, num_threads, compute_hashes);
+    try downloadModelToWriterParallel(allocator, io, config, &file_writer.interface, compute_hashes);
 }
 
 /// Download a model from Hugging Face and return it as owned memory

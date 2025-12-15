@@ -1,20 +1,13 @@
-//! Parallel chunk fetcher using thread pool
+//! Parallel chunk fetcher using Io.Group
 //!
-//! This module provides parallel downloading, decompression, and hashing of chunks.
-//! Each worker thread has its own IO and HTTP client instance for thread safety.
+//! This module provides parallel downloading, decompression, and hashing of chunks
+//! using std.Io.Group.concurrent for true concurrent I/O operations.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const cas_client = @import("cas_client.zig");
 const xorb = @import("xorb.zig");
 const hashing = @import("hashing.zig");
-
-/// Work item for parallel fetching
-const ChunkWork = struct {
-    term: cas_client.ReconstructionTerm,
-    fetch_info: []cas_client.FetchInfo,
-    index: usize,
-};
 
 /// Result of chunk processing
 pub const ChunkResult = struct {
@@ -28,19 +21,21 @@ pub const ChunkResult = struct {
     }
 };
 
-/// Context for worker threads (shared, read-only after init)
-const WorkerContext = struct {
+/// Context for a single chunk fetch operation
+const ChunkFetchContext = struct {
     allocator: Allocator,
-    work_queue: *std.ArrayList(ChunkWork),
+    term: cas_client.ReconstructionTerm,
+    fetch_info: []cas_client.FetchInfo,
+    index: usize,
+    compute_hashes: bool,
     results: []?ChunkResult,
     mutex: *std.Thread.Mutex,
     error_occurred: *std.atomic.Value(bool),
     first_error: *?anyerror,
     error_mutex: *std.Thread.Mutex,
-    compute_hashes: bool,
 };
 
-/// Fetch data from a presigned URL using the provided HTTP client
+/// Fetch data from a presigned URL
 fn fetchFromUrl(
     allocator: Allocator,
     http_client: *std.http.Client,
@@ -78,28 +73,31 @@ fn fetchFromUrl(
     return try reader.allocRemaining(allocator, @enumFromInt(128 * 1024 * 1024));
 }
 
-/// Process a single chunk work item
-fn processChunk(
-    ctx: *WorkerContext,
-    http_client: *std.http.Client,
-) !?ChunkResult {
-    var work_item: ?ChunkWork = null;
-    {
-        ctx.mutex.lock();
-        defer ctx.mutex.unlock();
+/// Process a single chunk - called concurrently via Io.Group
+fn processChunk(ctx: *ChunkFetchContext, io: std.Io) void {
+    if (ctx.error_occurred.load(.acquire)) return;
 
-        if (ctx.work_queue.items.len > 0) {
-            work_item = ctx.work_queue.pop();
+    const result = processChunkInner(ctx, io) catch |err| {
+        ctx.error_mutex.lock();
+        defer ctx.error_mutex.unlock();
+
+        if (ctx.first_error.* == null) {
+            ctx.first_error.* = err;
         }
-    }
+        ctx.error_occurred.store(true, .release);
+        return;
+    };
 
-    if (work_item == null) return null;
-    const work = work_item.?;
+    ctx.mutex.lock();
+    defer ctx.mutex.unlock();
+    ctx.results[ctx.index] = result;
+}
 
+fn processChunkInner(ctx: *ChunkFetchContext, io: std.Io) !ChunkResult {
     const matching_fetch_info = blk: {
-        for (work.fetch_info) |fetch_info| {
-            if (fetch_info.range.start <= work.term.range.start and
-                fetch_info.range.end >= work.term.range.end)
+        for (ctx.fetch_info) |fetch_info| {
+            if (fetch_info.range.start <= ctx.term.range.start and
+                fetch_info.range.end >= ctx.term.range.end)
             {
                 break :blk fetch_info;
             }
@@ -107,16 +105,19 @@ fn processChunk(
         return error.NoMatchingFetchInfo;
     };
 
+    var http_client = std.http.Client{ .allocator = ctx.allocator, .io = io };
+    defer http_client.deinit();
+
     const xorb_data = try fetchFromUrl(
         ctx.allocator,
-        http_client,
+        &http_client,
         matching_fetch_info.url,
         .{ .start = matching_fetch_info.url_range.start, .end = matching_fetch_info.url_range.end },
     );
     defer ctx.allocator.free(xorb_data);
 
-    const local_start = work.term.range.start - matching_fetch_info.range.start;
-    const local_end = work.term.range.end - matching_fetch_info.range.start;
+    const local_start = ctx.term.range.start - matching_fetch_info.range.start;
+    const local_end = ctx.term.range.end - matching_fetch_info.range.start;
 
     var xorb_reader = xorb.XorbReader.init(ctx.allocator, xorb_data);
     const chunk_data = try xorb_reader.extractChunkRange(local_start, local_end);
@@ -130,58 +131,25 @@ fn processChunk(
     return ChunkResult{
         .data = chunk_data,
         .hash = chunk_hash,
-        .index = work.index,
+        .index = ctx.index,
         .allocator = ctx.allocator,
     };
 }
 
-/// Worker thread function - creates its own IO and HTTP client
-fn workerThread(ctx: *WorkerContext) void {
-    var io_instance = std.Io.Threaded.init(ctx.allocator);
-    defer io_instance.deinit();
-    const io = io_instance.io();
-
-    var http_client = std.http.Client{ .allocator = ctx.allocator, .io = io };
-    defer http_client.deinit();
-
-    while (!ctx.error_occurred.load(.acquire)) {
-        const result = processChunk(ctx, &http_client) catch |err| {
-            ctx.error_mutex.lock();
-            defer ctx.error_mutex.unlock();
-
-            if (ctx.first_error.* == null) {
-                ctx.first_error.* = err;
-            }
-            ctx.error_occurred.store(true, .release);
-            return;
-        };
-
-        if (result) |chunk_result| {
-            ctx.mutex.lock();
-            defer ctx.mutex.unlock();
-
-            ctx.results[chunk_result.index] = chunk_result;
-        } else {
-            break;
-        }
-    }
-}
-
-/// Parallel chunk fetcher
+/// Parallel chunk fetcher using Io.Group
 pub const ParallelFetcher = struct {
     allocator: Allocator,
-    num_threads: usize,
+    io: std.Io,
     compute_hashes: bool,
 
     pub fn init(
         allocator: Allocator,
-        num_threads: ?usize,
+        io: std.Io,
         compute_hashes: bool,
     ) ParallelFetcher {
-        const thread_count = num_threads orelse @max(1, std.Thread.getCpuCount() catch 4);
         return ParallelFetcher{
             .allocator = allocator,
-            .num_threads = thread_count,
+            .io = io,
             .compute_hashes = compute_hashes,
         };
     }
@@ -196,33 +164,8 @@ pub const ParallelFetcher = struct {
             return &[_]ChunkResult{};
         }
 
-        var work_queue: std.ArrayList(ChunkWork) = .empty;
-        defer work_queue.deinit(self.allocator);
-
-        for (terms, 0..) |term, i| {
-            const hash_hex = try cas_client.hashToApiHex(term.hash, self.allocator);
-            defer self.allocator.free(hash_hex);
-
-            const fetch_infos = fetch_info_map.get(hash_hex) orelse return error.MissingFetchInfo;
-
-            try work_queue.append(self.allocator, .{
-                .term = term,
-                .fetch_info = fetch_infos,
-                .index = i,
-            });
-        }
-
-        std.mem.reverse(ChunkWork, work_queue.items);
-
         const results = try self.allocator.alloc(?ChunkResult, terms.len);
-        defer {
-            for (results) |*opt_result| {
-                if (opt_result.*) |*result| {
-                    result.deinit();
-                }
-            }
-            self.allocator.free(results);
-        }
+        defer self.allocator.free(results);
         @memset(results, null);
 
         var mutex = std.Thread.Mutex{};
@@ -230,29 +173,49 @@ pub const ParallelFetcher = struct {
         var first_error: ?anyerror = null;
         var error_mutex = std.Thread.Mutex{};
 
-        var ctx = WorkerContext{
-            .allocator = self.allocator,
-            .work_queue = &work_queue,
-            .results = results,
-            .mutex = &mutex,
-            .error_occurred = &error_occurred,
-            .first_error = &first_error,
-            .error_mutex = &error_mutex,
-            .compute_hashes = self.compute_hashes,
-        };
+        const contexts = try self.allocator.alloc(ChunkFetchContext, terms.len);
+        defer self.allocator.free(contexts);
 
-        const threads = try self.allocator.alloc(std.Thread, self.num_threads);
-        defer self.allocator.free(threads);
+        for (terms, 0..) |term, i| {
+            const hash_hex = try cas_client.hashToApiHex(term.hash, self.allocator);
+            defer self.allocator.free(hash_hex);
 
-        for (threads) |*thread| {
-            thread.* = try std.Thread.spawn(.{}, workerThread, .{&ctx});
+            const fetch_infos = fetch_info_map.get(hash_hex) orelse return error.MissingFetchInfo;
+
+            contexts[i] = .{
+                .allocator = self.allocator,
+                .term = term,
+                .fetch_info = fetch_infos,
+                .index = i,
+                .compute_hashes = self.compute_hashes,
+                .results = results,
+                .mutex = &mutex,
+                .error_occurred = &error_occurred,
+                .first_error = &first_error,
+                .error_mutex = &error_mutex,
+            };
         }
 
-        for (threads) |thread| {
-            thread.join();
+        var group: std.Io.Group = .init;
+
+        for (contexts) |*ctx| {
+            group.concurrent(self.io, processChunk, .{ ctx, self.io }) catch |err| {
+                switch (err) {
+                    error.ConcurrencyUnavailable => {
+                        processChunk(ctx, self.io);
+                    },
+                }
+            };
         }
+
+        group.wait(self.io);
 
         if (error_occurred.load(.acquire)) {
+            for (results) |*opt_result| {
+                if (opt_result.*) |*result| {
+                    result.deinit();
+                }
+            }
             return first_error orelse error.UnknownError;
         }
 
@@ -267,7 +230,6 @@ pub const ParallelFetcher = struct {
         for (results, 0..) |opt_result, i| {
             if (opt_result) |result| {
                 ordered_results[i] = result;
-                results[i] = null;
             } else {
                 return error.MissingResult;
             }
