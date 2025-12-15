@@ -59,8 +59,7 @@ pub fn keyedChunkHash(chunk_hash: Hash, hmac_key: [32]u8) Hash {
 
 /// Check if a key is all zeros (no HMAC protection).
 pub fn isZeroKey(key: [32]u8) bool {
-    const zero_key: [32]u8 = @splat(0);
-    return std.mem.eql(u8, &key, &zero_key);
+    return std.mem.allEqual(u8, &key, 0);
 }
 
 pub fn hashToHex(hash: Hash) [64]u8 {
