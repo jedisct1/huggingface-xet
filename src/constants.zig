@@ -1,13 +1,6 @@
 //! XET Protocol Constants
-//!
-//! This module contains all constants defined in the XET protocol specification.
-//! These constants ensure deterministic behavior across implementations.
 
 const std = @import("std");
-
-// ============================================================================
-// Chunking Constants (Gearhash CDC)
-// ============================================================================
 
 /// Minimum chunk size in bytes (8 KiB)
 pub const MinChunkSize: usize = 8192;
@@ -18,11 +11,8 @@ pub const TargetChunkSize: usize = 65536;
 /// Maximum chunk size in bytes (128 KiB)
 pub const MaxChunkSize: usize = 131072;
 
-/// Mask for boundary detection (16 one-bits in upper positions)
-/// Provides 1/2^16 probability of boundary per byte
 pub const GearHashMask: u64 = 0xFFFF000000000000;
 
-/// Gearhash lookup table with 256 64-bit pseudo-random constants
 pub const GearHashTable: [256]u64 = .{
     0xb088d3a9e840f559, 0x5652c7f739ed20d6, 0x45b28969898972ab, 0x6b0a89d5b68ec777,
     0x368f573e8b7a31b7, 0x1dc636dce936d94b, 0x207a4c4e5554d5b6, 0xa474b34628239acb,
@@ -90,41 +80,28 @@ pub const GearHashTable: [256]u64 = .{
     0x18f346f7abc9d394, 0x636dc655d61ad33d, 0xcc8bab4939f7f3f6, 0x63c7a906c1dd187b,
 };
 
-// ============================================================================
-// BLAKE3 Hashing Keys
-// ============================================================================
-
-/// BLAKE3 key for computing data/chunk hashes (leaf nodes)
-/// Used by compute_data_hash()
+/// BLAKE3 key for data/chunk hashes (leaf nodes)
 pub const DataKey: [32]u8 = .{
     102, 151, 245, 119, 91,  149, 80, 222, 49,  53,  203, 172, 165, 151, 24,  28,
     157, 228, 33,  16,  155, 235, 43, 88,  180, 208, 176, 75,  147, 173, 242, 41,
 };
 
-/// BLAKE3 key for computing internal node hashes (xorb hashes)
-/// Used by compute_internal_node_hash()
+/// BLAKE3 key for internal node hashes
 pub const InternalNodeKey: [32]u8 = .{
     1,  126, 197, 199, 165, 71,  41,  150, 253, 148, 102, 102, 180, 138, 2,   230,
     93, 221, 83,  111, 55,  199, 109, 210, 248, 99,  82,  230, 74,  83,  113, 63,
 };
 
 /// BLAKE3 key for file hashing (zero key)
-/// File hash is computed by hashing the merkle root with this key
 pub const FileHashKey: [32]u8 = @splat(0);
 
 /// BLAKE3 key for verification hashes
-/// Used for chunk range hash verification in shard format
 pub const VerificationKey: [32]u8 = .{
     127, 24,  87, 214, 206, 86,  237, 102, 18, 127, 249, 19,  231, 165, 195, 243,
     164, 205, 38, 213, 181, 219, 73,  230, 65, 36,  152, 127, 40,  251, 148, 195,
 };
 
-/// Hash output size in bytes (256 bits)
 pub const HashSize: usize = 32;
-
-// ============================================================================
-// Xorb Format Constants
-// ============================================================================
 
 /// Maximum serialized xorb size in bytes (64 MiB)
 pub const MaxXorbSize: usize = 64 * 1024 * 1024;
@@ -145,10 +122,6 @@ pub const CompressionType = enum(u8) {
     ByteGrouping4LZ4 = 2,
 };
 
-// ============================================================================
-// MDB Shard Format Constants
-// ============================================================================
-
 /// MDB shard header size in bytes
 pub const MdbHeaderSize: usize = 48;
 
@@ -164,19 +137,13 @@ pub const MdbFooterVersion: u64 = 1;
 /// Size of all MDB entry structures
 pub const MdbEntrySize: usize = 48;
 
-/// MDB shard header magic tag (32 bytes)
-/// Identifies files as valid Merkle DB shard files
 pub const MdbShardHeaderTag: [32]u8 = .{
     72,  70, 82,  101, 112, 111, 77, 101, 116, 97, 68,  97, 116, 97, 0, 85, 105, 103, 69, 106, 123,
     129, 87, 131, 165, 189, 217, 92, 205, 209, 74, 169,
 };
 
-/// Bookend marker for section boundaries (32 bytes 0xFF + 16 bytes 0x00)
+/// Bookend marker for section boundaries
 pub const MdbBookendMarker: [48]u8 = @as([32]u8, @splat(0xFF)) ++ @as([16]u8, @splat(0));
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 test "chunking constants are valid" {
     try std.testing.expect(MinChunkSize < TargetChunkSize);
@@ -202,7 +169,6 @@ test "blake3 keys have correct size" {
 }
 
 test "blake3 keys are distinct" {
-    // Ensure DATA_KEY and INTERNAL_NODE_KEY are different
     try std.testing.expect(!std.mem.eql(u8, &DataKey, &InternalNodeKey));
 }
 

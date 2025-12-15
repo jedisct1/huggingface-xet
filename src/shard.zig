@@ -439,7 +439,6 @@ test "shard serialization and deserialization" {
     var builder = ShardBuilder.init(allocator);
     defer builder.deinit();
 
-    // Create test data
     const file_hash = hashing.computeDataHash("test file");
     const entries = [_]FileDataSequenceEntry{
         .{
@@ -464,11 +463,9 @@ test "shard serialization and deserialization" {
 
     try builder.addCASInfo(hashing.computeDataHash("xorb1"), &cas_entries, 1000, 500);
 
-    // Serialize
     const serialized = try builder.serialize();
     defer allocator.free(serialized);
 
-    // Deserialize
     var reader = try ShardReader.init(allocator, serialized);
 
     try std.testing.expectEqual(constants.MdbHeaderVersion, reader.header.version);
@@ -486,10 +483,7 @@ test "shard parseCASInfo extracts chunk locations" {
     var builder = ShardBuilder.init(allocator);
     defer builder.deinit();
 
-    // Create test xorb hash
     const xorb_hash = hashing.computeDataHash("test_xorb");
-
-    // Create test CAS entries with different chunks
     const chunk1_hash = hashing.computeDataHash("chunk1");
     const chunk2_hash = hashing.computeDataHash("chunk2");
     const chunk3_hash = hashing.computeDataHash("chunk3");
@@ -517,7 +511,6 @@ test "shard parseCASInfo extracts chunk locations" {
 
     try builder.addCASInfo(xorb_hash, &cas_entries, 28672, 15000);
 
-    // Serialize and parse
     const serialized = try builder.serialize();
     defer allocator.free(serialized);
 
@@ -525,22 +518,15 @@ test "shard parseCASInfo extracts chunk locations" {
     var locations = try reader.parseCASInfo();
     defer locations.deinit(allocator);
 
-    // Verify we got all 3 chunks
     try std.testing.expectEqual(@as(usize, 3), locations.items.len);
-
-    // Verify first chunk
     try std.testing.expectEqualSlices(u8, &chunk1_hash, &locations.items[0].hash);
     try std.testing.expectEqualSlices(u8, &xorb_hash, &locations.items[0].xorb_hash);
     try std.testing.expectEqual(@as(u32, 0), locations.items[0].byte_offset);
     try std.testing.expectEqual(@as(u32, 8192), locations.items[0].size);
-
-    // Verify second chunk
     try std.testing.expectEqualSlices(u8, &chunk2_hash, &locations.items[1].hash);
     try std.testing.expectEqualSlices(u8, &xorb_hash, &locations.items[1].xorb_hash);
     try std.testing.expectEqual(@as(u32, 8192), locations.items[1].byte_offset);
     try std.testing.expectEqual(@as(u32, 16384), locations.items[1].size);
-
-    // Verify third chunk
     try std.testing.expectEqualSlices(u8, &chunk3_hash, &locations.items[2].hash);
     try std.testing.expectEqualSlices(u8, &xorb_hash, &locations.items[2].xorb_hash);
     try std.testing.expectEqual(@as(u32, 24576), locations.items[2].byte_offset);
@@ -584,7 +570,6 @@ test "keyed shard stores and retrieves HMAC key" {
     var builder = ShardBuilder.init(allocator);
     defer builder.deinit();
 
-    // Set HMAC key
     var hmac_key: [32]u8 = undefined;
     for (&hmac_key, 0..) |*b, i| {
         b.* = @truncate(i * 7);
@@ -593,11 +578,9 @@ test "keyed shard stores and retrieves HMAC key" {
     builder.setCreationTimestamp(1700000000);
     builder.setKeyExpiry(1700086400);
 
-    // Serialize
     const serialized = try builder.serialize();
     defer allocator.free(serialized);
 
-    // Read back
     var reader = try ShardReader.init(allocator, serialized);
 
     try std.testing.expect(reader.isKeyed());
@@ -614,25 +597,19 @@ test "keyed shard keyedChunkHash transforms hash" {
     var builder = ShardBuilder.init(allocator);
     defer builder.deinit();
 
-    // Set HMAC key
     var hmac_key: [32]u8 = @splat(0);
     hmac_key[0] = 99;
     builder.setHmacKey(hmac_key);
 
-    // Serialize
     const serialized = try builder.serialize();
     defer allocator.free(serialized);
 
-    // Read back
     var reader = try ShardReader.init(allocator, serialized);
 
     const original_hash = hashing.computeDataHash("test chunk");
     const keyed_hash = reader.keyedChunkHash(original_hash);
 
-    // Should be different from original
     try std.testing.expect(!std.mem.eql(u8, &original_hash, &keyed_hash));
-
-    // Should match what hashing.keyedChunkHash produces
     const expected_keyed = hashing.keyedChunkHash(original_hash, hmac_key);
     try std.testing.expectEqualSlices(u8, &expected_keyed, &keyed_hash);
 }
@@ -642,8 +619,6 @@ test "unkeyed shard keyedChunkHash returns original" {
     var builder = ShardBuilder.init(allocator);
     defer builder.deinit();
 
-    // Don't set HMAC key (zero key)
-
     const serialized = try builder.serialize();
     defer allocator.free(serialized);
 
@@ -651,8 +626,6 @@ test "unkeyed shard keyedChunkHash returns original" {
 
     const original_hash = hashing.computeDataHash("test chunk");
     const keyed_hash = reader.keyedChunkHash(original_hash);
-
-    // Should be same as original (no transformation)
     try std.testing.expectEqualSlices(u8, &original_hash, &keyed_hash);
 }
 
@@ -661,19 +634,17 @@ test "keyed shard findChunkLocation with HMAC transformation" {
     var builder = ShardBuilder.init(allocator);
     defer builder.deinit();
 
-    // Set HMAC key
     var hmac_key: [32]u8 = @splat(0);
     hmac_key[0] = 77;
     builder.setHmacKey(hmac_key);
 
-    // Create chunk with HMAC-transformed hash stored in shard
     const original_chunk_hash = hashing.computeDataHash("chunk data");
     const keyed_chunk_hash = hashing.keyedChunkHash(original_chunk_hash, hmac_key);
     const xorb_hash = hashing.computeDataHash("xorb");
 
     const cas_entries = [_]CASChunkSequenceEntry{
         .{
-            .chunk_hash = keyed_chunk_hash, // Store the keyed hash
+            .chunk_hash = keyed_chunk_hash,
             .byte_range_start = 100,
             .unpacked_segment_size = 5000,
             .reserved = @splat(0),

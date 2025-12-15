@@ -92,15 +92,8 @@ pub const MerkleNode = struct {
     size: u64,
 };
 
-// Mean branching factor for the merkle tree
 const MeanTreeBranchingFactor: u64 = 4;
 
-/// Find the next cut point in a sequence of hashes at which to break.
-///
-/// Variable branching logic:
-/// - Each parent must have at least 2 children and at most 2*MEAN_TREE_BRANCHING_FACTOR children
-/// - Split when hash % MEAN_TREE_BRANCHING_FACTOR == 0 (on average, every 4 nodes)
-/// - This ensures the tree has O(log n) height with controlled branching
 fn nextMergeCut(nodes: []const MerkleNode) usize {
     if (nodes.len <= 2) {
         return nodes.len;
@@ -110,7 +103,6 @@ fn nextMergeCut(nodes: []const MerkleNode) usize {
 
     var i: usize = 2;
     while (i < end) : (i += 1) {
-        // Use the last u64 (bytes 24-31) of the hash for modulo check
         const hash_as_u64 = std.mem.readInt(u64, nodes[i].hash[24..32], .little);
 
         if (hash_as_u64 % MeanTreeBranchingFactor == 0) {
@@ -121,10 +113,6 @@ fn nextMergeCut(nodes: []const MerkleNode) usize {
     return end;
 }
 
-/// Merge a sequence of nodes into a single node by concatenating their representations
-/// and hashing with the InternalNodeKey.
-///
-/// Returns a new MerkleNode with the merged hash and sum of all sizes.
 fn mergedHashOfSequence(allocator: std.mem.Allocator, nodes: []const MerkleNode) !MerkleNode {
     var buffer: std.ArrayList(u8) = .empty;
     defer buffer.deinit(allocator);
@@ -143,15 +131,8 @@ fn mergedHashOfSequence(allocator: std.mem.Allocator, nodes: []const MerkleNode)
     return MerkleNode{ .hash = merged_hash, .size = total_size };
 }
 
-/// Build a Merkle tree using the XET protocol's aggregated node hash algorithm.
-///
-/// Tree-based approach with variable branching factor (mean=4):
-/// 1. Iteratively collapses groups of 2-9 nodes based on hash % 4 == 0
-/// 2. Continues until only one node remains (the root)
-/// 3. Returns the final hash
 pub fn buildMerkleTree(allocator: std.mem.Allocator, chunks: []const MerkleNode) !Hash {
     if (chunks.len == 0) {
-        // Return zero hash for empty input
         return [_]u8{0} ** constants.HashSize;
     }
 
@@ -159,33 +140,23 @@ pub fn buildMerkleTree(allocator: std.mem.Allocator, chunks: []const MerkleNode)
         return chunks[0].hash;
     }
 
-    // Copy chunks to working vector that we'll iteratively collapse
     var hv = try std.ArrayList(MerkleNode).initCapacity(allocator, chunks.len);
     defer hv.deinit(allocator);
 
     try hv.appendSlice(allocator, chunks);
 
-    // Iteratively collapse until only one node remains
     while (hv.items.len > 1) {
         var write_idx: usize = 0;
         var read_idx: usize = 0;
 
         while (read_idx < hv.items.len) {
-            // Find the next cut point
             const next_cut = read_idx + nextMergeCut(hv.items[read_idx..]);
-
-            // Merge this group of nodes
             const merged = try mergedHashOfSequence(allocator, hv.items[read_idx..next_cut]);
-
-            // Store the merged node at write_idx
             hv.items[write_idx] = merged;
             write_idx += 1;
-
-            // Move to next group
             read_idx = next_cut;
         }
 
-        // Resize to only include the merged nodes
         try hv.resize(allocator, write_idx);
     }
 
@@ -204,8 +175,6 @@ test "different data produces different hashes" {
     const data2 = "Hello, Zig!";
     const hash1 = computeDataHash(data1);
     const hash2 = computeDataHash(data2);
-
-    // Hashes should be different
     try std.testing.expect(!std.mem.eql(u8, &hash1, &hash2));
 }
 
@@ -213,8 +182,6 @@ test "data hash and internal node hash are different for same input" {
     const data = "Hello, World!";
     const data_hash = computeDataHash(data);
     const internal_hash = computeInternalNodeHash(data);
-
-    // Different keys should produce different hashes
     try std.testing.expect(!std.mem.eql(u8, &data_hash, &internal_hash));
 }
 
@@ -223,10 +190,7 @@ test "hash to hex conversion" {
     const hash = computeDataHash(data);
     const hex = hashToHex(hash);
 
-    // Should be 64 hex characters (32 bytes)
     try std.testing.expectEqual(@as(usize, 64), hex.len);
-
-    // Should only contain valid hex characters
     for (hex) |c| {
         try std.testing.expect((c >= '0' and c <= '9') or (c >= 'a' and c <= 'f'));
     }
@@ -267,10 +231,7 @@ test "merkle tree with multiple chunks" {
     const root1 = try buildMerkleTree(allocator, &chunks);
     const root2 = try buildMerkleTree(allocator, &chunks);
 
-    // Should be deterministic
     try std.testing.expectEqualSlices(u8, &root1, &root2);
-
-    // Should be different from individual chunk hashes
     try std.testing.expect(!std.mem.eql(u8, &root1, &chunks[0].hash));
     try std.testing.expect(!std.mem.eql(u8, &root1, &chunks[1].hash));
     try std.testing.expect(!std.mem.eql(u8, &root1, &chunks[2].hash));
@@ -279,8 +240,6 @@ test "merkle tree with multiple chunks" {
 test "file hash is different from merkle root" {
     const merkle_root = computeDataHash("test");
     const file_hash = computeFileHash(merkle_root);
-
-    // File hash applies additional transformation
     try std.testing.expect(!std.mem.eql(u8, &merkle_root, &file_hash));
 }
 
@@ -291,13 +250,8 @@ test "hmac produces different output for different keys" {
 
     const hmac1 = hmac(key1, message);
     const hmac2 = hmac(key2, message);
-
-    // Different keys should produce different HMACs
     try std.testing.expect(!std.mem.eql(u8, &hmac1, &hmac2));
 }
-
-// Cross-verification tests with known test vectors
-// These test vectors verify protocol compatibility.
 
 test "merkle tree - empty input" {
     const allocator = std.testing.allocator;
@@ -317,7 +271,6 @@ test "merkle tree - single chunk (all zeros)" {
     };
 
     const root = try buildMerkleTree(allocator, &chunks);
-    // Single chunk returns the chunk hash unchanged
     try std.testing.expectEqualSlices(u8, &hash, &root);
 }
 
@@ -440,11 +393,8 @@ test "keyedChunkHash transforms hash for non-zero key" {
     hmac_key[0] = 42;
 
     const result = keyedChunkHash(chunk_hash, hmac_key);
-
-    // Result should be different from original
     try std.testing.expect(!std.mem.eql(u8, &chunk_hash, &result));
 
-    // Should be deterministic
     const result2 = keyedChunkHash(chunk_hash, hmac_key);
     try std.testing.expectEqualSlices(u8, &result, &result2);
 }

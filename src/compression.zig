@@ -441,14 +441,13 @@ test "byte grouping large data round trip" {
     var prng = std.Random.DefaultPrng.init(42);
     const random = prng.random();
 
-    // Test with different sizes matching Rust test suite
     const sizes = [_]usize{
-        64 * 1024, // 65536 - aligned
-        64 * 1024 - 53, // 65483 - rem=3
-        64 * 1024 + 135, // 65671 - rem=3
-        1000, // Small size
-        1, // Single byte
-        7, // rem=3
+        64 * 1024,
+        64 * 1024 - 53,
+        64 * 1024 + 135,
+        1000,
+        1,
+        7,
     };
 
     for (sizes) |size| {
