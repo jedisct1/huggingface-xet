@@ -75,10 +75,10 @@ fn fetchFromUrl(
 }
 
 /// Process a single chunk - called concurrently via Io.Group
-fn processChunk(ctx: *ChunkFetchContext, io: std.Io) void {
+fn processChunk(ctx: *ChunkFetchContext) void {
     if (ctx.error_occurred.load(.acquire)) return;
 
-    const result = processChunkInner(ctx, io) catch |err| {
+    const result = processChunkInner(ctx) catch |err| {
         ctx.error_mutex.lock();
         defer ctx.error_mutex.unlock();
 
@@ -94,8 +94,7 @@ fn processChunk(ctx: *ChunkFetchContext, io: std.Io) void {
     ctx.results[ctx.index] = result;
 }
 
-fn processChunkInner(ctx: *ChunkFetchContext, io: std.Io) !ChunkResult {
-    _ = io;
+fn processChunkInner(ctx: *ChunkFetchContext) !ChunkResult {
     const matching_fetch_info = blk: {
         for (ctx.fetch_info) |fetch_info| {
             if (fetch_info.range.start <= ctx.term.range.start and
@@ -202,10 +201,10 @@ pub const ParallelFetcher = struct {
         var group: std.Io.Group = .init;
 
         for (contexts) |*ctx| {
-            group.concurrent(self.io, processChunk, .{ ctx, self.io }) catch |err| {
+            group.concurrent(self.io, processChunk, .{ctx}) catch |err| {
                 switch (err) {
                     error.ConcurrencyUnavailable => {
-                        processChunk(ctx, self.io);
+                        processChunk(ctx);
                     },
                 }
             };
