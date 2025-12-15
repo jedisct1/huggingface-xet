@@ -23,7 +23,6 @@ pub const MaxChunkSize: usize = 131072;
 pub const GearHashMask: u64 = 0xFFFF000000000000;
 
 /// Gearhash lookup table with 256 64-bit pseudo-random constants
-/// Source: rust-gearhash DEFAULT_TABLE
 pub const GearHashTable: [256]u64 = .{
     0xb088d3a9e840f559, 0x5652c7f739ed20d6, 0x45b28969898972ab, 0x6b0a89d5b68ec777,
     0x368f573e8b7a31b7, 0x1dc636dce936d94b, 0x207a4c4e5554d5b6, 0xa474b34628239acb,

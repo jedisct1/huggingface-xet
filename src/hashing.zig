@@ -18,8 +18,15 @@ pub fn computeInternalNodeHash(data: []const u8) Hash {
 }
 
 pub fn computeFileHash(merkle_root: Hash) Hash {
+    return computeFileHashWithSalt(merkle_root, constants.FileHashKey);
+}
+
+/// Compute file hash with a custom salt/key.
+/// This is used when shards have HMAC protection enabled.
+/// When salt is all zeros, this is equivalent to computeFileHash().
+pub fn computeFileHashWithSalt(merkle_root: Hash, salt: [32]u8) Hash {
     var hash: Hash = undefined;
-    std.crypto.hash.Blake3.hash(&merkle_root, &hash, .{ .key = constants.FileHashKey });
+    std.crypto.hash.Blake3.hash(&merkle_root, &hash, .{ .key = salt });
     return hash;
 }
 
@@ -35,6 +42,27 @@ pub fn hmac(key: [32]u8, message: []const u8) Hash {
     return hash;
 }
 
+/// Apply HMAC to a hash using a key.
+/// This is used for chunk hash protection in keyed shards.
+pub fn hmacHash(key: [32]u8, hash_input: Hash) Hash {
+    return hmac(key, &hash_input);
+}
+
+/// Transform a chunk hash using an HMAC key.
+/// If the key is all zeros, returns the original hash unchanged.
+pub fn keyedChunkHash(chunk_hash: Hash, hmac_key: [32]u8) Hash {
+    if (isZeroKey(hmac_key)) {
+        return chunk_hash;
+    }
+    return hmacHash(hmac_key, chunk_hash);
+}
+
+/// Check if a key is all zeros (no HMAC protection).
+pub fn isZeroKey(key: [32]u8) bool {
+    const zero_key: [32]u8 = @splat(0);
+    return std.mem.eql(u8, &key, &zero_key);
+}
+
 pub fn hashToHex(hash: Hash) [64]u8 {
     var result: [64]u8 = undefined;
     var i: usize = 0;
@@ -48,7 +76,7 @@ pub fn hashToHex(hash: Hash) [64]u8 {
 
 pub fn hexToHash(hex: []const u8) !Hash {
     if (hex.len != 64) return error.InvalidHexLength;
-    // Rust formats hashes as [u64; 4] with each u64 in little-endian format
+    // Hashes are formatted as [u64; 4] with each u64 in little-endian format
     // Parse each 16-char hex string as a u64, then write as little-endian bytes
     var hash: Hash = undefined;
     var i: usize = 0;
@@ -70,7 +98,7 @@ const MeanTreeBranchingFactor: u64 = 4;
 
 /// Find the next cut point in a sequence of hashes at which to break.
 ///
-/// This implements the variable branching logic from the Rust reference:
+/// Variable branching logic:
 /// - Each parent must have at least 2 children and at most 2*MEAN_TREE_BRANCHING_FACTOR children
 /// - Split when hash % MEAN_TREE_BRANCHING_FACTOR == 0 (on average, every 4 nodes)
 /// - This ensures the tree has O(log n) height with controlled branching
@@ -83,8 +111,7 @@ fn nextMergeCut(nodes: []const MerkleNode) usize {
 
     var i: usize = 2;
     while (i < end) : (i += 1) {
-        // Convert hash bytes to u64 for modulo check
-        // Rust uses self[3] which is the last u64 (bytes 24-31) of the [u64; 4] array
+        // Use the last u64 (bytes 24-31) of the hash for modulo check
         const hash_as_u64 = std.mem.readInt(u64, nodes[i].hash[24..32], .little);
 
         if (hash_as_u64 % MeanTreeBranchingFactor == 0) {
@@ -119,13 +146,10 @@ fn mergedHashOfSequence(allocator: std.mem.Allocator, nodes: []const MerkleNode)
 
 /// Build a Merkle tree using the XET protocol's aggregated node hash algorithm.
 ///
-/// This implements the tree-based approach with variable branching factor (mean=4)
-/// from the Rust reference implementation. The algorithm:
+/// Tree-based approach with variable branching factor (mean=4):
 /// 1. Iteratively collapses groups of 2-9 nodes based on hash % 4 == 0
 /// 2. Continues until only one node remains (the root)
 /// 3. Returns the final hash
-///
-/// This is CRITICAL for protocol compatibility - must match Rust exactly.
 pub fn buildMerkleTree(allocator: std.mem.Allocator, chunks: []const MerkleNode) !Hash {
     if (chunks.len == 0) {
         // Return zero hash for empty input
@@ -273,9 +297,8 @@ test "hmac produces different output for different keys" {
     try std.testing.expect(!std.mem.eql(u8, &hmac1, &hmac2));
 }
 
-// Cross-verification tests with Rust reference implementation
-// These test vectors are taken from the Rust merklehash crate's test suite
-// and verify that our implementation produces identical hashes.
+// Cross-verification tests with known test vectors
+// These test vectors verify protocol compatibility.
 
 test "merkle tree - empty input" {
     const allocator = std.testing.allocator;
@@ -391,4 +414,73 @@ test "merkle tree - 32 identical chunks" {
     const expected = "0a0123c1617921883b7e13902095fcb86676e77c49120c33b233003b0af0e0a6";
 
     try std.testing.expectEqualStrings(expected, &hashToHex(root));
+}
+
+test "isZeroKey returns true for all-zero key" {
+    const zero_key: [32]u8 = @splat(0);
+    try std.testing.expect(isZeroKey(zero_key));
+}
+
+test "isZeroKey returns false for non-zero key" {
+    var non_zero_key: [32]u8 = @splat(0);
+    non_zero_key[0] = 1;
+    try std.testing.expect(!isZeroKey(non_zero_key));
+}
+
+test "keyedChunkHash returns original hash for zero key" {
+    const chunk_hash = computeDataHash("test chunk");
+    const zero_key: [32]u8 = @splat(0);
+
+    const result = keyedChunkHash(chunk_hash, zero_key);
+    try std.testing.expectEqualSlices(u8, &chunk_hash, &result);
+}
+
+test "keyedChunkHash transforms hash for non-zero key" {
+    const chunk_hash = computeDataHash("test chunk");
+    var hmac_key: [32]u8 = @splat(0);
+    hmac_key[0] = 42;
+
+    const result = keyedChunkHash(chunk_hash, hmac_key);
+
+    // Result should be different from original
+    try std.testing.expect(!std.mem.eql(u8, &chunk_hash, &result));
+
+    // Should be deterministic
+    const result2 = keyedChunkHash(chunk_hash, hmac_key);
+    try std.testing.expectEqualSlices(u8, &result, &result2);
+}
+
+test "computeFileHashWithSalt with zero salt equals computeFileHash" {
+    const merkle_root = computeDataHash("test root");
+    const zero_salt: [32]u8 = @splat(0);
+
+    const file_hash = computeFileHash(merkle_root);
+    const file_hash_with_salt = computeFileHashWithSalt(merkle_root, zero_salt);
+
+    try std.testing.expectEqualSlices(u8, &file_hash, &file_hash_with_salt);
+}
+
+test "computeFileHashWithSalt produces different hash for non-zero salt" {
+    const merkle_root = computeDataHash("test root");
+    const zero_salt: [32]u8 = @splat(0);
+    var non_zero_salt: [32]u8 = @splat(0);
+    non_zero_salt[0] = 123;
+
+    const file_hash_zero = computeFileHashWithSalt(merkle_root, zero_salt);
+    const file_hash_nonzero = computeFileHashWithSalt(merkle_root, non_zero_salt);
+
+    try std.testing.expect(!std.mem.eql(u8, &file_hash_zero, &file_hash_nonzero));
+}
+
+test "hmacHash is consistent with hmac on hash bytes" {
+    var key: [32]u8 = undefined;
+    for (&key, 0..) |*b, i| {
+        b.* = @truncate(i);
+    }
+
+    const hash_input = computeDataHash("test");
+    const result1 = hmacHash(key, hash_input);
+    const result2 = hmac(key, &hash_input);
+
+    try std.testing.expectEqualSlices(u8, &result1, &result2);
 }
