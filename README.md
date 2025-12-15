@@ -39,7 +39,7 @@ It can be compiled to WebAssembly, but runs at about 45% of the non-threaded nat
 # Build the project
 zig build
 
-# Run tests (62 tests covering all components)
+# Run tests (98 tests covering all components)
 zig build test
 
 # Run the demo CLI
@@ -113,7 +113,6 @@ try xet.model_download.downloadModelToFileParallel(
     io,
     config,
     "output.gguf",
-    null,  // Use CPU count for threads
     false, // Don't compute hashes during download
 );
 ```
