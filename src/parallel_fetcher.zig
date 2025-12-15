@@ -24,6 +24,7 @@ pub const ChunkResult = struct {
 /// Context for a single chunk fetch operation
 const ChunkFetchContext = struct {
     allocator: Allocator,
+    http_client: *std.http.Client,
     term: cas_client.ReconstructionTerm,
     fetch_info: []cas_client.FetchInfo,
     index: usize,
@@ -94,6 +95,7 @@ fn processChunk(ctx: *ChunkFetchContext, io: std.Io) void {
 }
 
 fn processChunkInner(ctx: *ChunkFetchContext, io: std.Io) !ChunkResult {
+    _ = io;
     const matching_fetch_info = blk: {
         for (ctx.fetch_info) |fetch_info| {
             if (fetch_info.range.start <= ctx.term.range.start and
@@ -105,12 +107,9 @@ fn processChunkInner(ctx: *ChunkFetchContext, io: std.Io) !ChunkResult {
         return error.NoMatchingFetchInfo;
     };
 
-    var http_client = std.http.Client{ .allocator = ctx.allocator, .io = io };
-    defer http_client.deinit();
-
     const xorb_data = try fetchFromUrl(
         ctx.allocator,
-        &http_client,
+        ctx.http_client,
         matching_fetch_info.url,
         .{ .start = matching_fetch_info.url_range.start, .end = matching_fetch_info.url_range.end },
     );
@@ -140,16 +139,19 @@ fn processChunkInner(ctx: *ChunkFetchContext, io: std.Io) !ChunkResult {
 pub const ParallelFetcher = struct {
     allocator: Allocator,
     io: std.Io,
+    http_client: *std.http.Client,
     compute_hashes: bool,
 
     pub fn init(
         allocator: Allocator,
         io: std.Io,
+        http_client: *std.http.Client,
         compute_hashes: bool,
     ) ParallelFetcher {
         return ParallelFetcher{
             .allocator = allocator,
             .io = io,
+            .http_client = http_client,
             .compute_hashes = compute_hashes,
         };
     }
@@ -184,6 +186,7 @@ pub const ParallelFetcher = struct {
 
             contexts[i] = .{
                 .allocator = self.allocator,
+                .http_client = self.http_client,
                 .term = term,
                 .fetch_info = fetch_infos,
                 .index = i,
