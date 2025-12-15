@@ -11,12 +11,15 @@ const xet = @import("xet");
 /// - Fetching chunks from xorbs (with full deduplication support)
 /// - Reconstructing and saving the file
 ///
-/// Example model: MiMo-7B-RL-Q8_0.gguf from jedisct1/MiMo-7B-RL-GGUF
-///
 /// Usage:
-///   1. Set HF_TOKEN environment variable with your Hugging Face token
-///      Get one at: https://huggingface.co/settings/tokens
-///   2. Run: zig build run-example-download
+///   HF_TOKEN=your_token zig build run-example-download -- <repo_id> [filename]
+///
+/// Examples:
+///   # List files in a repository
+///   HF_TOKEN=hf_xxx zig build run-example-download -- jedisct1/MiMo-7B-RL-GGUF
+///
+///   # Download a specific file
+///   HF_TOKEN=hf_xxx zig build run-example-download -- jedisct1/MiMo-7B-RL-GGUF MiMo-7B-RL-Q8_0.gguf
 ///
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -33,19 +36,98 @@ pub fn main() !void {
     defer stderr_writer.interface.flush() catch {};
     const stderr = &stderr_writer.interface;
 
-    // Configuration
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
+
+    if (args.len < 2) {
+        try stderr.print("Usage: {s} <repo_id> [filename]\n", .{args[0]});
+        try stderr.print("\nExamples:\n", .{});
+        try stderr.print("  # List files in a repository\n", .{});
+        try stderr.print("  HF_TOKEN=hf_xxx {s} jedisct1/MiMo-7B-RL-GGUF\n\n", .{args[0]});
+        try stderr.print("  # Download a specific file\n", .{});
+        try stderr.print("  HF_TOKEN=hf_xxx {s} jedisct1/MiMo-7B-RL-GGUF MiMo-7B-RL-Q8_0.gguf\n", .{args[0]});
+        try stderr.flush();
+        return error.InvalidArgs;
+    }
+
+    const repo_id = args[1];
+    const filename: ?[]const u8 = if (args.len > 2) args[2] else null;
+
+    var io_instance = std.Io.Threaded.init(allocator);
+    defer io_instance.deinit();
+    const io = io_instance.io();
+
+    try stdout.print("Fetching file list for {s}...\n", .{repo_id});
+    try stdout.flush();
+
+    var file_list = try xet.model_download.listFiles(
+        allocator,
+        io,
+        repo_id,
+        "model",
+        "main",
+        null,
+    );
+    defer file_list.deinit();
+
+    var selected_file: ?xet.model_download.FileInfo = null;
+
+    if (filename) |name| {
+        for (file_list.files) |*file| {
+            if (file.xet_hash != null and
+                (std.mem.eql(u8, file.path, name) or
+                    std.mem.endsWith(u8, file.path, name)))
+            {
+                selected_file = file.*;
+                break;
+            }
+        }
+        if (selected_file == null) {
+            try stderr.print("File '{s}' not found or not stored with XET.\n", .{name});
+            try stderr.print("\nAvailable XET files:\n", .{});
+            for (file_list.files) |file| {
+                if (file.xet_hash != null) {
+                    const size_mb = @as(f64, @floatFromInt(file.size)) / (1024.0 * 1024.0);
+                    try stderr.print("  {s} ({d:.2} MB)\n", .{ file.path, size_mb });
+                }
+            }
+            try stderr.flush();
+            return error.FileNotFound;
+        }
+    } else {
+        try stdout.print("\nAvailable XET files in {s}:\n", .{repo_id});
+        for (file_list.files) |file| {
+            if (file.xet_hash != null) {
+                const size_mb = @as(f64, @floatFromInt(file.size)) / (1024.0 * 1024.0);
+                const size_gb = size_mb / 1024.0;
+                if (size_gb >= 1.0) {
+                    try stdout.print("  {s} ({d:.2} GB)\n", .{ file.path, size_gb });
+                } else {
+                    try stdout.print("  {s} ({d:.2} MB)\n", .{ file.path, size_mb });
+                }
+            }
+        }
+        try stdout.print("\nTo download a file, run:\n", .{});
+        try stdout.print("  {s} {s} <filename>\n", .{ args[0], repo_id });
+        try stdout.flush();
+        return;
+    }
+
+    const file = selected_file.?;
+    const file_hash_hex = file.xet_hash.?;
+    const output_path = std.fs.path.basename(file.path);
+
     const config = xet.model_download.DownloadConfig{
-        .repo_id = "jedisct1/MiMo-7B-RL-GGUF",
+        .repo_id = repo_id,
         .repo_type = "model",
         .revision = "main",
-        .file_hash_hex = "04ed9c6064a24be1dbefbd7acd0f8749fc469e3d350e5c44804e686dac353506",
+        .file_hash_hex = file_hash_hex,
     };
-    const output_path = "MiMo-7B-RL-Q8_0.gguf";
 
-    try stdout.print("XET Protocol Model Download Example\n", .{});
-    try stdout.print("====================================\n\n", .{});
+    try stdout.print("XET Protocol Model Download\n", .{});
+    try stdout.print("===========================\n\n", .{});
     try stdout.print("Repository: {s}\n", .{config.repo_id});
-    try stdout.print("File hash: {s}\n", .{config.file_hash_hex});
+    try stdout.print("File: {s}\n", .{file.path});
     try stdout.print("Output: {s}\n\n", .{output_path});
 
     try stdout.print("Downloading model using XET protocol...\n", .{});
@@ -53,16 +135,11 @@ pub fn main() !void {
 
     try stdout.flush();
 
-    var io_instance = std.Io.Threaded.init(allocator);
-    defer io_instance.deinit();
-    const io = io_instance.io();
-
     const start_time = try std.time.Instant.now();
 
-    // Download the model using the high-level API
     xet.model_download.downloadModelToFile(allocator, io, config, output_path) catch |err| {
         try stderr.print("\nError: Download failed: {}\n", .{err});
-        if (err == error.FileNotFound) {
+        if (err == error.EnvironmentVariableNotFound) {
             try stderr.print("Make sure HF_TOKEN environment variable is set.\n", .{});
             try stderr.print("Get a token at: https://huggingface.co/settings/tokens\n", .{});
         } else if (err == error.AuthenticationFailed) {
@@ -70,6 +147,7 @@ pub fn main() !void {
             try stderr.print("  - HF_TOKEN is valid and not expired\n", .{});
             try stderr.print("  - You have access to the repository\n", .{});
         }
+        try stderr.flush();
         return err;
     };
 
@@ -78,10 +156,9 @@ pub fn main() !void {
     const elapsed_ms = @as(f64, @floatFromInt(elapsed_ns)) / std.time.ns_per_ms;
     const elapsed_s = elapsed_ms / 1000.0;
 
-    // Get file size for stats
-    const file = try std.fs.cwd().openFile(output_path, .{});
-    defer file.close();
-    const file_size = try file.getEndPos();
+    const output_file = try std.fs.cwd().openFile(output_path, .{});
+    defer output_file.close();
+    const file_size = try output_file.getEndPos();
 
     try stdout.print("Download complete!\n", .{});
     try stdout.print("  Time: {d:.2}s\n", .{elapsed_s});
@@ -93,7 +170,5 @@ pub fn main() !void {
         @as(f64, @floatFromInt(file_size)) / (1024.0 * 1024.0) / elapsed_s,
     });
     try stdout.print("  Output: {s}\n", .{output_path});
-
-    try stdout.print("\n====================================\n", .{});
-    try stdout.print("Model downloaded successfully!\n", .{});
+    try stdout.flush();
 }
