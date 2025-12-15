@@ -238,7 +238,7 @@ pub const CasClient = struct {
 
         // Build extra headers array
         var range_header_buf: [64]u8 = undefined;
-        var extra_headers_storage: [2]std.http.Header = undefined;
+        var extra_headers_storage: [3]std.http.Header = undefined;
         var extra_headers_count: usize = 1;
         extra_headers_storage[0] = .{ .name = "Authorization", .value = auth_header };
 
@@ -267,8 +267,12 @@ pub const CasClient = struct {
             return statusToError(response.head.status);
         }
 
-        // Read response body
-        var reader = response.reader(&.{});
+        // Read response body with decompression support
+        // Note: decompress_buffer must be at least std.compress.flate.max_window_len (64KB)
+        var transfer_buffer: [16 * 1024]u8 = undefined;
+        var decompress_buffer: [std.compress.flate.max_window_len]u8 = undefined;
+        var decompress: std.http.Decompress = undefined;
+        var reader = response.readerDecompressing(&transfer_buffer, &decompress, &decompress_buffer);
         const body = try reader.allocRemaining(self.allocator, @enumFromInt(10 * 1024 * 1024)); // 10MB max
         defer self.allocator.free(body);
 
