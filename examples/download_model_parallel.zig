@@ -1,20 +1,21 @@
 const std = @import("std");
 const xet = @import("xet");
 
-/// Example: Download a model from Hugging Face using parallel chunk fetching
+/// Download a model from Hugging Face using parallel chunk fetching
 ///
 /// This example demonstrates how to use the parallel fetching API to download
-/// models faster by fetching, decompressing, and hashing chunks in parallel.
+/// models faster by fetching, decompressing, and processing chunks in parallel
+/// using Io.Group for concurrent async operations.
 ///
 /// Usage:
-///   HF_TOKEN=your_token zig build run-example-parallel -- <repo_id> <file_hash_hex> <output_path> [num_threads]
+///   HF_TOKEN=your_token zig build run-example-parallel -- <repo_id> [filename]
 ///
-/// Example:
-///   HF_TOKEN=hf_xxx zig build run-example-parallel -- \
-///     jedisct1/MiMo-7B-RL-GGUF \
-///     04ed9c6064a24be1dbefbd7acd0f8749fc469e3d350e5c44804e686dac353506 \
-///     model.gguf \
-///     8
+/// Examples:
+///   # Download a specific file
+///   HF_TOKEN=hf_xxx zig build run-example-parallel -- jedisct1/MiMo-7B-RL-GGUF MiMo-7B-RL-Q8_0.gguf
+///
+///   # List available files in a repository
+///   HF_TOKEN=hf_xxx zig build run-example-parallel -- apple/DiffuCoder-7B-Instruct
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -23,37 +24,108 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
 
-    if (args.len < 4) {
-        std.debug.print("Usage: {s} <repo_id> <file_hash_hex> <output_path> [num_threads]\n", .{args[0]});
-        std.debug.print("\nExample:\n", .{});
-        std.debug.print("  HF_TOKEN=hf_xxx {s} \\\n", .{args[0]});
-        std.debug.print("    jedisct1/MiMo-7B-RL-GGUF \\\n", .{});
-        std.debug.print("    04ed9c6064a24be1dbefbd7acd0f8749fc469e3d350e5c44804e686dac353506 \\\n", .{});
-        std.debug.print("    model.gguf \\\n", .{});
-        std.debug.print("    8\n", .{});
+    if (args.len < 2) {
+        std.debug.print("Usage: {s} <repo_id> [filename]\n", .{args[0]});
+        std.debug.print("\nExamples:\n", .{});
+        std.debug.print("  # List files in a repository\n", .{});
+        std.debug.print("  HF_TOKEN=hf_xxx {s} jedisct1/MiMo-7B-RL-GGUF\n\n", .{args[0]});
+        std.debug.print("  # Download a specific file\n", .{});
+        std.debug.print("  HF_TOKEN=hf_xxx {s} jedisct1/MiMo-7B-RL-GGUF MiMo-7B-RL-Q8_0.gguf\n", .{args[0]});
         return error.InvalidArgs;
     }
 
     const repo_id = args[1];
-    const file_hash_hex = args[2];
-    const output_path = args[3];
+    const filename: ?[]const u8 = if (args.len > 2) args[2] else null;
 
-    // Optional: number of threads (default = CPU count)
-    const num_threads: ?usize = if (args.len > 4)
-        try std.fmt.parseInt(usize, args[4], 10)
-    else
-        null;
+    var xet_files: std.ArrayList(xet.model_download.FileInfo) = .empty;
+    defer {
+        for (xet_files.items) |*f| f.deinit();
+        xet_files.deinit(allocator);
+    }
 
-    const thread_count = num_threads orelse blk: {
-        const cpu_count = try std.Thread.getCpuCount();
-        break :blk cpu_count;
-    };
+    {
+        var io_instance = std.Io.Threaded.init(allocator);
+        defer io_instance.deinit();
+        const io = io_instance.io();
 
-    std.debug.print("Downloading model with parallel fetching...\n", .{});
+        std.debug.print("Fetching file list for {s}...\n", .{repo_id});
+
+        var file_list = try xet.model_download.listFiles(
+            allocator,
+            io,
+            repo_id,
+            "model",
+            "main",
+            null,
+        );
+        defer file_list.deinit();
+
+        for (file_list.files) |file| {
+            if (file.xet_hash != null) {
+                const path_copy = try allocator.dupe(u8, file.path);
+                errdefer allocator.free(path_copy);
+                const hash_copy = if (file.xet_hash) |h| try allocator.dupe(u8, h) else null;
+                try xet_files.append(allocator, .{
+                    .path = path_copy,
+                    .size = file.size,
+                    .xet_hash = hash_copy,
+                    .allocator = allocator,
+                });
+            }
+        }
+    }
+
+    if (xet_files.items.len == 0) {
+        std.debug.print("No XET files found in repository.\n", .{});
+        return error.NoXetFiles;
+    }
+
+    var selected_file: ?xet.model_download.FileInfo = null;
+
+    if (filename) |name| {
+        for (xet_files.items) |file| {
+            if (std.mem.eql(u8, file.path, name) or
+                std.mem.endsWith(u8, file.path, name))
+            {
+                selected_file = file;
+                break;
+            }
+        }
+        if (selected_file == null) {
+            std.debug.print("File '{s}' not found in repository.\n", .{name});
+            std.debug.print("\nAvailable XET files:\n", .{});
+            for (xet_files.items) |file| {
+                const size_mb = @as(f64, @floatFromInt(file.size)) / (1024.0 * 1024.0);
+                std.debug.print("  {s} ({d:.2} MB)\n", .{ file.path, size_mb });
+            }
+            return error.FileNotFound;
+        }
+    } else {
+        std.debug.print("\nAvailable XET files in {s}:\n", .{repo_id});
+        std.debug.print("─────────────────────────────────────────────────────\n", .{});
+        for (xet_files.items) |file| {
+            const size_mb = @as(f64, @floatFromInt(file.size)) / (1024.0 * 1024.0);
+            const size_gb = size_mb / 1024.0;
+            if (size_gb >= 1.0) {
+                std.debug.print("  {s} ({d:.2} GB)\n", .{ file.path, size_gb });
+            } else {
+                std.debug.print("  {s} ({d:.2} MB)\n", .{ file.path, size_mb });
+            }
+        }
+        std.debug.print("\nTo download a file, run:\n", .{});
+        std.debug.print("  {s} {s} <filename>\n", .{ args[0], repo_id });
+        return;
+    }
+
+    const file = selected_file.?;
+    const file_hash_hex = file.xet_hash.?;
+
+    const output_path = std.fs.path.basename(file.path);
+
+    std.debug.print("\nDownloading with parallel fetching...\n", .{});
     std.debug.print("  Repository: {s}\n", .{repo_id});
-    std.debug.print("  File hash:  {s}\n", .{file_hash_hex});
+    std.debug.print("  File:       {s}\n", .{file.path});
     std.debug.print("  Output:     {s}\n", .{output_path});
-    std.debug.print("  Threads:    {d}\n", .{thread_count});
     std.debug.print("\n", .{});
 
     const config = xet.model_download.DownloadConfig{
@@ -65,18 +137,17 @@ pub fn main() !void {
 
     var timer = try std.time.Timer.start();
 
-    // Use parallel download
-    var io_instance = std.Io.Threaded.init(allocator);
-    defer io_instance.deinit();
-    const io = io_instance.io();
+    var download_io_instance = std.Io.Threaded.init(allocator);
+    defer download_io_instance.deinit();
+    const download_io = download_io_instance.io();
 
     try xet.model_download.downloadModelToFileParallel(
         allocator,
-        io,
+        download_io,
         config,
         output_path,
-        num_threads,
-        false, // Don't compute hashes (focus on download speed)
+        null, // Use CPU count for thread count
+        false,
     );
 
     const duration_ns = timer.read();
@@ -85,10 +156,9 @@ pub fn main() !void {
     std.debug.print("\nDownload complete!\n", .{});
     std.debug.print("  Time: {d}ms\n", .{duration_ms});
 
-    // Get file size
-    const file = try std.fs.cwd().openFile(output_path, .{});
-    defer file.close();
-    const file_size = try file.getEndPos();
+    const out_file = try std.fs.cwd().openFile(output_path, .{});
+    defer out_file.close();
+    const file_size = try out_file.getEndPos();
     const size_mb = @as(f64, @floatFromInt(file_size)) / (1024.0 * 1024.0);
 
     std.debug.print("  Size: {d:.2} MB\n", .{size_mb});

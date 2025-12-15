@@ -17,6 +17,218 @@ pub const DownloadConfig = struct {
     hf_token: ?[]const u8 = null,
 };
 
+/// Information about a file in a HuggingFace repository
+pub const FileInfo = struct {
+    /// File path within the repository
+    path: []const u8,
+    /// File size in bytes
+    size: u64,
+    /// XET hash (if file is stored with XET protocol)
+    xet_hash: ?[]const u8,
+
+    allocator: Allocator,
+
+    pub fn deinit(self: *FileInfo) void {
+        self.allocator.free(self.path);
+        if (self.xet_hash) |hash| {
+            self.allocator.free(hash);
+        }
+    }
+};
+
+/// List of files in a repository
+pub const FileList = struct {
+    files: []FileInfo,
+    allocator: Allocator,
+
+    pub fn deinit(self: *FileList) void {
+        for (self.files) |*file| {
+            file.deinit();
+        }
+        self.allocator.free(self.files);
+    }
+
+    /// Get files that have XET hashes (large files stored with XET protocol)
+    pub fn getXetFiles(self: *const FileList) []const FileInfo {
+        var count: usize = 0;
+        for (self.files) |file| {
+            if (file.xet_hash != null) count += 1;
+        }
+        if (count == 0) return &.{};
+
+        const result = self.allocator.alloc(FileInfo, count) catch return &.{};
+        var i: usize = 0;
+        for (self.files) |file| {
+            if (file.xet_hash != null) {
+                result[i] = file;
+                i += 1;
+            }
+        }
+        return result;
+    }
+
+    /// Find a file by path (exact match or suffix match)
+    pub fn findFile(self: *const FileList, name: []const u8) ?*const FileInfo {
+        for (self.files) |*file| {
+            if (std.mem.eql(u8, file.path, name)) return file;
+            if (std.mem.endsWith(u8, file.path, name)) return file;
+        }
+        return null;
+    }
+};
+
+/// List files in a HuggingFace repository
+pub fn listFiles(
+    allocator: Allocator,
+    io: std.Io,
+    repo_id: []const u8,
+    repo_type: []const u8,
+    revision: []const u8,
+    hf_token: ?[]const u8,
+) !FileList {
+    const token = if (hf_token) |t|
+        t
+    else blk: {
+        const t = try std.process.getEnvVarOwned(allocator, "HF_TOKEN");
+        errdefer allocator.free(t);
+        break :blk t;
+    };
+    const should_free_token = hf_token == null;
+    defer if (should_free_token) allocator.free(token);
+
+    const tree_url = try std.fmt.allocPrint(
+        allocator,
+        "https://huggingface.co/api/{s}s/{s}/tree/{s}",
+        .{ repo_type, repo_id, revision },
+    );
+    defer allocator.free(tree_url);
+
+    var http_client = std.http.Client{ .allocator = allocator, .io = io };
+    defer http_client.deinit();
+
+    const auth_header = try std.fmt.allocPrint(allocator, "Bearer {s}", .{token});
+    defer allocator.free(auth_header);
+
+    const extra_headers = [_]std.http.Header{
+        .{ .name = "Authorization", .value = auth_header },
+    };
+
+    const uri = try std.Uri.parse(tree_url);
+    var req = try http_client.request(.GET, uri, .{
+        .extra_headers = &extra_headers,
+    });
+    defer req.deinit();
+
+    try req.sendBodiless();
+    var response = try req.receiveHead(&.{});
+
+    if (response.head.status != .ok) {
+        return error.ApiRequestFailed;
+    }
+
+    var reader = response.reader(&.{});
+    const body = try reader.allocRemaining(allocator, @enumFromInt(1024 * 1024));
+    defer allocator.free(body);
+
+    const parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        body,
+        .{},
+    );
+    defer parsed.deinit();
+
+    const items = parsed.value.array;
+    var files: std.ArrayList(FileInfo) = .empty;
+    errdefer {
+        for (files.items) |*f| f.deinit();
+        files.deinit(allocator);
+    }
+
+    for (items.items) |item| {
+        const obj = item.object;
+        const file_type = obj.get("type") orelse continue;
+        if (!std.mem.eql(u8, file_type.string, "file")) continue;
+
+        const path_val = obj.get("path") orelse continue;
+        const path = try allocator.dupe(u8, path_val.string);
+        errdefer allocator.free(path);
+
+        const size: u64 = if (obj.get("size")) |s| @intCast(s.integer) else 0;
+
+        const xet_hash: ?[]const u8 = if (obj.get("xetHash")) |h|
+            try allocator.dupe(u8, h.string)
+        else
+            null;
+
+        try files.append(allocator, .{
+            .path = path,
+            .size = size,
+            .xet_hash = xet_hash,
+            .allocator = allocator,
+        });
+    }
+
+    return .{
+        .files = try files.toOwnedSlice(allocator),
+        .allocator = allocator,
+    };
+}
+
+/// Get XET hash for a specific file using the resolve endpoint
+/// This is an alternative to listFiles() when you know the exact file path
+pub fn getFileXetHash(
+    allocator: Allocator,
+    io: std.Io,
+    repo_id: []const u8,
+    revision: []const u8,
+    filepath: []const u8,
+    hf_token: ?[]const u8,
+) ![]const u8 {
+    const token = if (hf_token) |t|
+        t
+    else blk: {
+        const t = try std.process.getEnvVarOwned(allocator, "HF_TOKEN");
+        errdefer allocator.free(t);
+        break :blk t;
+    };
+    const should_free_token = hf_token == null;
+    defer if (should_free_token) allocator.free(token);
+
+    const resolve_url = try std.fmt.allocPrint(
+        allocator,
+        "https://huggingface.co/{s}/resolve/{s}/{s}",
+        .{ repo_id, revision, filepath },
+    );
+    defer allocator.free(resolve_url);
+
+    var http_client = std.http.Client{ .allocator = allocator, .io = io };
+    defer http_client.deinit();
+
+    const auth_header = try std.fmt.allocPrint(allocator, "Bearer {s}", .{token});
+    defer allocator.free(auth_header);
+
+    const extra_headers = [_]std.http.Header{
+        .{ .name = "Authorization", .value = auth_header },
+    };
+
+    const uri = try std.Uri.parse(resolve_url);
+    var req = try http_client.request(.HEAD, uri, .{
+        .extra_headers = &extra_headers,
+    });
+    defer req.deinit();
+
+    try req.sendBodiless();
+    _ = try req.receiveHead(&.{ .max_redirects = 0 });
+
+    const xet_hash_header = req.response.iterateHeaders(.{ .name = "x-xet-hash" }).next();
+    if (xet_hash_header) |header| {
+        return try allocator.dupe(u8, header.value);
+    }
+
+    return error.NoXetHash;
+}
+
 /// Result from XET token exchange with Hugging Face Hub
 const XetTokenResult = struct {
     access_token: []const u8,
@@ -197,6 +409,7 @@ pub fn downloadModelToWriter(
 /// Download a model from Hugging Face and write it to a writer using parallel fetching
 ///
 /// This is similar to downloadModelToWriter() but uses parallel chunk fetching for better performance.
+/// Each worker thread has its own IO instance for thread safety.
 ///
 /// Parameters:
 /// - allocator: Memory allocator
@@ -212,7 +425,6 @@ pub fn downloadModelToWriterParallel(
     num_threads: ?usize,
     compute_hashes: bool,
 ) !void {
-    // Get HF token (from config or environment)
     const hf_token = if (config.hf_token) |token|
         token
     else blk: {
@@ -223,14 +435,11 @@ pub fn downloadModelToWriterParallel(
     const should_free_token = config.hf_token == null;
     defer if (should_free_token) allocator.free(hf_token);
 
-    // Request XET token from Hugging Face Hub
     var xet_token = try requestXetToken(allocator, io, config, hf_token);
     defer xet_token.deinit();
 
-    // Convert file hash from API hex format to binary
     const file_hash = try cas_client.apiHexToHash(config.file_hash_hex);
 
-    // Initialize CAS client
     var cas = try cas_client.CasClient.init(
         allocator,
         io,
@@ -239,7 +448,6 @@ pub fn downloadModelToWriterParallel(
     );
     defer cas.deinit();
 
-    // Reconstruct file using parallel stream API
     var reconstructor = reconstruction.FileReconstructor.init(allocator, &cas);
     try reconstructor.reconstructStreamParallel(file_hash, writer, num_threads, compute_hashes);
 }
@@ -247,6 +455,7 @@ pub fn downloadModelToWriterParallel(
 /// Download a model from Hugging Face and write it to a file using parallel fetching
 ///
 /// This is similar to downloadModelToFile() but uses parallel chunk fetching for better performance.
+/// Each worker thread has its own IO instance for thread safety.
 ///
 /// Parameters:
 /// - allocator: Memory allocator
@@ -262,7 +471,6 @@ pub fn downloadModelToFileParallel(
     num_threads: ?usize,
     compute_hashes: bool,
 ) !void {
-    // Open output file for writing
     const file = try std.fs.cwd().createFile(output_path, .{});
     defer file.close();
 

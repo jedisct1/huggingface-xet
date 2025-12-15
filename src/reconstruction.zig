@@ -194,7 +194,6 @@ pub const FileReconstructor = if (has_network) struct {
 
         var fetcher = parallel_fetcher.ParallelFetcher.init(
             self.allocator,
-            self.cas,
             num_threads,
             compute_hashes,
         );
