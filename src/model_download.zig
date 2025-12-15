@@ -3,6 +3,25 @@ const Allocator = std.mem.Allocator;
 const cas_client = @import("cas_client.zig");
 const reconstruction = @import("reconstruction.zig");
 
+const OwnedToken = struct {
+    value: []const u8,
+    allocator: ?Allocator,
+
+    fn init(allocator: Allocator, provided: ?[]const u8) !OwnedToken {
+        if (provided) |token| {
+            return .{ .value = token, .allocator = null };
+        }
+        const token = try std.process.getEnvVarOwned(allocator, "HF_TOKEN");
+        return .{ .value = token, .allocator = allocator };
+    }
+
+    fn deinit(self: OwnedToken) void {
+        if (self.allocator) |alloc| {
+            alloc.free(self.value);
+        }
+    }
+};
+
 /// Configuration for downloading a model from Hugging Face
 pub const DownloadConfig = struct {
     /// Repository ID (e.g., "jedisct1/MiMo-7B-RL-GGUF")
@@ -86,15 +105,8 @@ pub fn listFiles(
     revision: []const u8,
     hf_token: ?[]const u8,
 ) !FileList {
-    const token = if (hf_token) |t|
-        t
-    else blk: {
-        const t = try std.process.getEnvVarOwned(allocator, "HF_TOKEN");
-        errdefer allocator.free(t);
-        break :blk t;
-    };
-    const should_free_token = hf_token == null;
-    defer if (should_free_token) allocator.free(token);
+    const token = try OwnedToken.init(allocator, hf_token);
+    defer token.deinit();
 
     const tree_url = try std.fmt.allocPrint(
         allocator,
@@ -106,7 +118,7 @@ pub fn listFiles(
     var http_client = std.http.Client{ .allocator = allocator, .io = io };
     defer http_client.deinit();
 
-    const auth_header = try std.fmt.allocPrint(allocator, "Bearer {s}", .{token});
+    const auth_header = try std.fmt.allocPrint(allocator, "Bearer {s}", .{token.value});
     defer allocator.free(auth_header);
 
     const extra_headers = [_]std.http.Header{
@@ -185,15 +197,8 @@ pub fn getFileXetHash(
     filepath: []const u8,
     hf_token: ?[]const u8,
 ) ![]const u8 {
-    const token = if (hf_token) |t|
-        t
-    else blk: {
-        const t = try std.process.getEnvVarOwned(allocator, "HF_TOKEN");
-        errdefer allocator.free(t);
-        break :blk t;
-    };
-    const should_free_token = hf_token == null;
-    defer if (should_free_token) allocator.free(token);
+    const token = try OwnedToken.init(allocator, hf_token);
+    defer token.deinit();
 
     const resolve_url = try std.fmt.allocPrint(
         allocator,
@@ -205,7 +210,7 @@ pub fn getFileXetHash(
     var http_client = std.http.Client{ .allocator = allocator, .io = io };
     defer http_client.deinit();
 
-    const auth_header = try std.fmt.allocPrint(allocator, "Bearer {s}", .{token});
+    const auth_header = try std.fmt.allocPrint(allocator, "Bearer {s}", .{token.value});
     defer allocator.free(auth_header);
 
     const extra_headers = [_]std.http.Header{
@@ -374,19 +379,10 @@ pub fn downloadModelToWriter(
     config: DownloadConfig,
     writer: *std.Io.Writer,
 ) !void {
-    // Get HF token (from config or environment)
-    const hf_token = if (config.hf_token) |token|
-        token
-    else blk: {
-        const token = try std.process.getEnvVarOwned(allocator, "HF_TOKEN");
-        errdefer allocator.free(token);
-        break :blk token;
-    };
-    const should_free_token = config.hf_token == null;
-    defer if (should_free_token) allocator.free(hf_token);
+    const hf_token = try OwnedToken.init(allocator, config.hf_token);
+    defer hf_token.deinit();
 
-    // Request XET token from Hugging Face Hub
-    var xet_token = try requestXetToken(allocator, io, config, hf_token);
+    var xet_token = try requestXetToken(allocator, io, config, hf_token.value);
     defer xet_token.deinit();
 
     // Convert file hash from API hex format to binary
@@ -424,17 +420,10 @@ pub fn downloadModelToWriterParallel(
     writer: *std.Io.Writer,
     compute_hashes: bool,
 ) !void {
-    const hf_token = if (config.hf_token) |token|
-        token
-    else blk: {
-        const token = try std.process.getEnvVarOwned(allocator, "HF_TOKEN");
-        errdefer allocator.free(token);
-        break :blk token;
-    };
-    const should_free_token = config.hf_token == null;
-    defer if (should_free_token) allocator.free(hf_token);
+    const hf_token = try OwnedToken.init(allocator, config.hf_token);
+    defer hf_token.deinit();
 
-    var xet_token = try requestXetToken(allocator, io, config, hf_token);
+    var xet_token = try requestXetToken(allocator, io, config, hf_token.value);
     defer xet_token.deinit();
 
     const file_hash = try cas_client.apiHexToHash(config.file_hash_hex);
@@ -507,19 +496,10 @@ pub fn downloadModel(
     io: std.Io,
     config: DownloadConfig,
 ) ![]u8 {
-    // Get HF token (from config or environment)
-    const hf_token = if (config.hf_token) |token|
-        token
-    else blk: {
-        const token = try std.process.getEnvVarOwned(allocator, "HF_TOKEN");
-        errdefer allocator.free(token);
-        break :blk token;
-    };
-    const should_free_token = config.hf_token == null;
-    defer if (should_free_token) allocator.free(hf_token);
+    const hf_token = try OwnedToken.init(allocator, config.hf_token);
+    defer hf_token.deinit();
 
-    // Request XET token from Hugging Face Hub
-    var xet_token = try requestXetToken(allocator, io, config, hf_token);
+    var xet_token = try requestXetToken(allocator, io, config, hf_token.value);
     defer xet_token.deinit();
 
     // Convert file hash from API hex format to binary

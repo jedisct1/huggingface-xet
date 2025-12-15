@@ -118,11 +118,11 @@ fn mergedHashOfSequence(allocator: std.mem.Allocator, nodes: []const MerkleNode)
     defer buffer.deinit(allocator);
 
     var total_size: u64 = 0;
+    var line_buf: [88]u8 = undefined;
 
     for (nodes) |node| {
         const hex = hashToHex(node.hash);
-        const line = try std.fmt.allocPrint(allocator, "{s} : {d}\n", .{ hex, node.size });
-        defer allocator.free(line);
+        const line = std.fmt.bufPrint(&line_buf, "{s} : {d}\n", .{ hex, node.size }) catch unreachable;
         try buffer.appendSlice(allocator, line);
         total_size += node.size;
     }

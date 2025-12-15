@@ -16,6 +16,24 @@ pub const ChunkHeader = packed struct {
     uncompressed_size_mid: u8,
     uncompressed_size_high: u8,
 
+    pub fn init(
+        version: u8,
+        compression_type: u8,
+        compressed_size: usize,
+        uncompressed_size: usize,
+    ) ChunkHeader {
+        return .{
+            .version = version,
+            .compressed_size_low = @truncate(compressed_size),
+            .compressed_size_mid = @truncate(compressed_size >> 8),
+            .compressed_size_high = @truncate(compressed_size >> 16),
+            .compression_type = compression_type,
+            .uncompressed_size_low = @truncate(uncompressed_size),
+            .uncompressed_size_mid = @truncate(uncompressed_size >> 8),
+            .uncompressed_size_high = @truncate(uncompressed_size >> 16),
+        };
+    }
+
     pub fn getCompressedSize(self: ChunkHeader) usize {
         return @as(usize, self.compressed_size_low) |
             (@as(usize, self.compressed_size_mid) << 8) |
@@ -26,18 +44,6 @@ pub const ChunkHeader = packed struct {
         return @as(usize, self.uncompressed_size_low) |
             (@as(usize, self.uncompressed_size_mid) << 8) |
             (@as(usize, self.uncompressed_size_high) << 16);
-    }
-
-    pub fn setCompressedSize(self: *ChunkHeader, size: usize) void {
-        self.compressed_size_low = @truncate(size & 0xFF);
-        self.compressed_size_mid = @truncate((size >> 8) & 0xFF);
-        self.compressed_size_high = @truncate((size >> 16) & 0xFF);
-    }
-
-    pub fn setUncompressedSize(self: *ChunkHeader, size: usize) void {
-        self.uncompressed_size_low = @truncate(size & 0xFF);
-        self.uncompressed_size_mid = @truncate((size >> 8) & 0xFF);
-        self.uncompressed_size_high = @truncate((size >> 16) & 0xFF);
     }
 
     pub fn getCompressionType(self: ChunkHeader) !constants.CompressionType {
@@ -99,21 +105,14 @@ pub const XorbBuilder = struct {
             const compressed = try compression.compress(self.allocator, chunk.data, compression_type);
             defer self.allocator.free(compressed.data);
 
-            var header = ChunkHeader{
-                .version = constants.XorbVersion,
-                .compressed_size_low = 0,
-                .compressed_size_mid = 0,
-                .compressed_size_high = 0,
-                .compression_type = @intFromEnum(compressed.type),
-                .uncompressed_size_low = 0,
-                .uncompressed_size_mid = 0,
-                .uncompressed_size_high = 0,
-            };
-            header.setCompressedSize(compressed.data.len);
-            header.setUncompressedSize(chunk.data.len);
+            const header = ChunkHeader.init(
+                constants.XorbVersion,
+                @intFromEnum(compressed.type),
+                compressed.data.len,
+                chunk.data.len,
+            );
 
-            const header_bytes = std.mem.asBytes(&header);
-            try buffer.appendSlice(self.allocator, header_bytes);
+            try buffer.appendSlice(self.allocator, std.mem.asBytes(&header));
             try buffer.appendSlice(self.allocator, compressed.data);
         }
 
@@ -206,12 +205,13 @@ pub const XorbReader = struct {
 
         var reader = XorbReader.init(self.allocator, self.data);
         var current_index: u32 = 0;
-        var total_size: usize = 0;
+        var result: std.ArrayList(u8) = .empty;
+        errdefer result.deinit(self.allocator);
 
         while (try reader.nextChunk()) |chunk| {
             defer self.allocator.free(chunk);
             if (current_index >= start and current_index < end) {
-                total_size += chunk.len;
+                try result.appendSlice(self.allocator, chunk);
             }
             current_index += 1;
             if (current_index >= end) break;
@@ -219,46 +219,15 @@ pub const XorbReader = struct {
 
         if (current_index < end) return error.RangeOutOfBounds;
 
-        reader = XorbReader.init(self.allocator, self.data);
-        var result = try self.allocator.alloc(u8, total_size);
-        errdefer self.allocator.free(result);
-
-        current_index = 0;
-        var offset: usize = 0;
-
-        while (try reader.nextChunk()) |chunk| {
-            defer self.allocator.free(chunk);
-            if (current_index >= start and current_index < end) {
-                @memcpy(result[offset..][0..chunk.len], chunk);
-                offset += chunk.len;
-            }
-            current_index += 1;
-            if (current_index >= end) break;
-        }
-
-        return result;
+        return result.toOwnedSlice(self.allocator);
     }
 };
 
 test "chunk header size encoding/decoding" {
-    var header = ChunkHeader{
-        .version = 0,
-        .compressed_size_low = 0,
-        .compressed_size_mid = 0,
-        .compressed_size_high = 0,
-        .compression_type = 0,
-        .uncompressed_size_low = 0,
-        .uncompressed_size_mid = 0,
-        .uncompressed_size_high = 0,
-    };
-
-    // Test various sizes
     const test_sizes = [_]usize{ 0, 1, 255, 256, 65535, 65536, 0xFFFFFF };
     for (test_sizes) |size| {
-        header.setCompressedSize(size);
+        const header = ChunkHeader.init(0, 0, size, size);
         try std.testing.expectEqual(size, header.getCompressedSize());
-
-        header.setUncompressedSize(size);
         try std.testing.expectEqual(size, header.getUncompressedSize());
     }
 }

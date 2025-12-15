@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const hashing = @import("hashing.zig");
 
 /// CAS Client for interacting with the XET Content-Addressable Storage API
 ///
@@ -88,32 +89,13 @@ fn statusToError(status: std.http.Status) CasError {
 /// Hash conversion: Convert 32-byte hash to 64-char hex string using little-endian 8-byte segments
 /// This is a critical requirement from the XET protocol specification
 pub fn hashToApiHex(hash: [32]u8, allocator: Allocator) ![]u8 {
-    var result = try allocator.alloc(u8, 64);
-    errdefer allocator.free(result);
-
-    var i: usize = 0;
-    while (i < 32) : (i += 8) {
-        const segment = std.mem.readInt(u64, hash[i..][0..8], .little);
-        _ = std.fmt.bufPrint(result[i * 2 ..][0..16], "{x:0>16}", .{segment}) catch unreachable;
-    }
-
-    return result;
+    const hex = hashing.hashToHex(hash);
+    return allocator.dupe(u8, &hex);
 }
 
 /// Convert 64-char API hex string back to 32-byte hash
 pub fn apiHexToHash(hex: []const u8) ![32]u8 {
-    if (hex.len != 64) return error.InvalidResponse;
-
-    var hash: [32]u8 = undefined;
-    var i: usize = 0;
-    while (i < 32) : (i += 8) {
-        // Parse 16 hex chars as u64
-        const segment = try std.fmt.parseInt(u64, hex[i * 2 ..][0..16], 16);
-        // Write as little-endian
-        std.mem.writeInt(u64, hash[i..][0..8], segment, .little);
-    }
-
-    return hash;
+    return hashing.hexToHash(hex) catch error.InvalidResponse;
 }
 
 /// Chunk range within a xorb (start and end indices)
