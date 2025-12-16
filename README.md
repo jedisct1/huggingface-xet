@@ -15,7 +15,7 @@ It's particularly useful for managing large models and datasets, like those host
 This library implements the full XET protocol spec in Zig, including:
 
 - Content-defined chunking using the Gearhash algorithm (chunks are between 8KB-128KB)
-- LZ4 compression with byte grouping optimization
+- LZ4 compression with byte grouping optimization and experimental bit grouping
 - Merkle tree construction for efficient file verification
 - Xorb format for serializing chunked data
 - MDB shard format for metadata storage
