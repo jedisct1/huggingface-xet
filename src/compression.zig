@@ -75,7 +75,18 @@ pub fn compress(
         .ByteGrouping4LZ4 => {
             const grouped = try applyByteGrouping(allocator, data);
             defer allocator.free(grouped);
-            return compressLZ4(allocator, grouped, data.len, .ByteGrouping4LZ4);
+
+            const compressed_data = try lz4FrameCompress(allocator, grouped);
+            const final_size = compressed_data.len;
+
+            if (final_size >= data.len) {
+                allocator.free(compressed_data);
+                // Fall back to uncompressed, but keep bytes in original (ungrouped) order.
+                const result = try allocator.dupe(u8, data);
+                return .{ .data = result, .type = .None };
+            }
+
+            return .{ .data = compressed_data, .type = .ByteGrouping4LZ4 };
         },
         .FullBitsliceLZ4 => {
             const bitsliced = try applyFullBitslice(allocator, data);
@@ -425,6 +436,18 @@ test "ByteGrouping4LZ4 compression and decompression" {
 
     // Verify round trip
     try std.testing.expectEqualSlices(u8, &pattern, decompressed);
+}
+
+test "ByteGrouping4LZ4 falls back to None when not smaller" {
+    const allocator = std.testing.allocator;
+    // Small, incompressible data; grouped form would not shrink.
+    const data = "abcd";
+
+    const compressed_result = try compress(allocator, data, .ByteGrouping4LZ4);
+    defer allocator.free(compressed_result.data);
+
+    try std.testing.expectEqual(constants.CompressionType.None, compressed_result.type);
+    try std.testing.expectEqualSlices(u8, data, compressed_result.data);
 }
 
 test "LZ4 compression with small data" {
