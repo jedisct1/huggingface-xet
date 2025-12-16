@@ -215,6 +215,34 @@ pub fn build(b: *std.Build) void {
         const run_download_parallel = b.addRunArtifact(download_parallel_example);
         download_parallel_step.dependOn(&run_download_parallel.step);
         run_download_parallel.step.dependOn(b.getInstallStep());
+
+        if (b.args) |args| {
+            run_download_parallel.addArgs(args);
+        }
+
+        // Tool: Convert file to xorb format
+        const file_to_xorb = b.addExecutable(.{
+            .name = "file_to_xorb",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("examples/file_to_xorb.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "xet", .module = mod },
+                },
+            }),
+        });
+
+        b.installArtifact(file_to_xorb);
+
+        const file_to_xorb_step = b.step("run-file-to-xorb", "Convert a file to xorb format");
+        const run_file_to_xorb = b.addRunArtifact(file_to_xorb);
+        file_to_xorb_step.dependOn(&run_file_to_xorb.step);
+        run_file_to_xorb.step.dependOn(b.getInstallStep());
+
+        if (b.args) |args| {
+            run_file_to_xorb.addArgs(args);
+        }
     }
 
     // Just like flags, top level steps are also listed in the `--help` menu.
