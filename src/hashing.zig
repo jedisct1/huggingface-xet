@@ -22,7 +22,7 @@ pub fn computeFileHash(merkle_root: Hash) Hash {
 }
 
 /// Compute file hash with a custom salt/key.
-/// This is used when shards have HMAC protection enabled.
+/// This is used when shards have keyed hash protection enabled.
 /// When salt is all zeros, this is equivalent to computeFileHash().
 pub fn computeFileHashWithSalt(merkle_root: Hash, salt: [32]u8) Hash {
     var hash: Hash = undefined;
@@ -36,28 +36,29 @@ pub fn computeVerificationHash(data: []const u8) Hash {
     return hash;
 }
 
-pub fn hmac(key: [32]u8, message: []const u8) Hash {
+/// Compute a BLAKE3 keyed hash.
+pub fn keyedHash(key: [32]u8, message: []const u8) Hash {
     var hash: Hash = undefined;
     std.crypto.hash.Blake3.hash(message, &hash, .{ .key = key });
     return hash;
 }
 
-/// Apply HMAC to a hash using a key.
+/// Compute a keyed hash of a hash value.
 /// This is used for chunk hash protection in keyed shards.
-pub fn hmacHash(key: [32]u8, hash_input: Hash) Hash {
-    return hmac(key, &hash_input);
+pub fn keyedHashOfHash(key: [32]u8, hash_input: Hash) Hash {
+    return keyedHash(key, &hash_input);
 }
 
-/// Transform a chunk hash using an HMAC key.
+/// Transform a chunk hash using a key.
 /// If the key is all zeros, returns the original hash unchanged.
-pub fn keyedChunkHash(chunk_hash: Hash, hmac_key: [32]u8) Hash {
-    if (isZeroKey(hmac_key)) {
+pub fn keyedChunkHash(chunk_hash: Hash, key: [32]u8) Hash {
+    if (isZeroKey(key)) {
         return chunk_hash;
     }
-    return hmacHash(hmac_key, chunk_hash);
+    return keyedHashOfHash(key, chunk_hash);
 }
 
-/// Check if a key is all zeros (no HMAC protection).
+/// Check if a key is all zeros (no keyed hash protection).
 pub fn isZeroKey(key: [32]u8) bool {
     return std.mem.allEqual(u8, &key, 0);
 }
@@ -243,14 +244,14 @@ test "file hash is different from merkle root" {
     try std.testing.expect(!std.mem.eql(u8, &merkle_root, &file_hash));
 }
 
-test "hmac produces different output for different keys" {
+test "keyedHash produces different output for different keys" {
     const message = "test message";
     const key1: [32]u8 = @splat(0);
     const key2: [32]u8 = @splat(1);
 
-    const hmac1 = hmac(key1, message);
-    const hmac2 = hmac(key2, message);
-    try std.testing.expect(!std.mem.eql(u8, &hmac1, &hmac2));
+    const hash1 = keyedHash(key1, message);
+    const hash2 = keyedHash(key2, message);
+    try std.testing.expect(!std.mem.eql(u8, &hash1, &hash2));
 }
 
 test "merkle tree - empty input" {
@@ -389,13 +390,13 @@ test "keyedChunkHash returns original hash for zero key" {
 
 test "keyedChunkHash transforms hash for non-zero key" {
     const chunk_hash = computeDataHash("test chunk");
-    var hmac_key: [32]u8 = @splat(0);
-    hmac_key[0] = 42;
+    var key: [32]u8 = @splat(0);
+    key[0] = 42;
 
-    const result = keyedChunkHash(chunk_hash, hmac_key);
+    const result = keyedChunkHash(chunk_hash, key);
     try std.testing.expect(!std.mem.eql(u8, &chunk_hash, &result));
 
-    const result2 = keyedChunkHash(chunk_hash, hmac_key);
+    const result2 = keyedChunkHash(chunk_hash, key);
     try std.testing.expectEqualSlices(u8, &result, &result2);
 }
 
@@ -421,15 +422,15 @@ test "computeFileHashWithSalt produces different hash for non-zero salt" {
     try std.testing.expect(!std.mem.eql(u8, &file_hash_zero, &file_hash_nonzero));
 }
 
-test "hmacHash is consistent with hmac on hash bytes" {
+test "keyedHashOfHash is consistent with keyedHash on hash bytes" {
     var key: [32]u8 = undefined;
     for (&key, 0..) |*b, i| {
         b.* = @truncate(i);
     }
 
     const hash_input = computeDataHash("test");
-    const result1 = hmacHash(key, hash_input);
-    const result2 = hmac(key, &hash_input);
+    const result1 = keyedHashOfHash(key, hash_input);
+    const result2 = keyedHash(key, &hash_input);
 
     try std.testing.expectEqualSlices(u8, &result1, &result2);
 }

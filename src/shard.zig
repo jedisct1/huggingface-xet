@@ -29,7 +29,7 @@ pub const ShardFooter = extern struct {
     file_info_offset: u64,
     cas_info_offset: u64,
     reserved1: [48]u8,
-    chunk_hash_hmac_key: [32]u8,
+    chunk_hash_key: [32]u8,
     creation_timestamp: u64,
     key_expiry: u64,
     reserved2: [72]u8,
@@ -47,7 +47,7 @@ pub const ShardFooter = extern struct {
             .file_info_offset = 0,
             .cas_info_offset = 0,
             .reserved1 = @splat(0),
-            .chunk_hash_hmac_key = @splat(0),
+            .chunk_hash_key = @splat(0),
             .creation_timestamp = 0,
             .key_expiry = 0,
             .reserved2 = @splat(0),
@@ -55,15 +55,15 @@ pub const ShardFooter = extern struct {
         };
     }
 
-    /// Check if this shard has HMAC-protected chunk hashes.
+    /// Check if this shard has keyed hash protected chunk hashes.
     pub fn isKeyed(self: ShardFooter) bool {
-        return !hashing.isZeroKey(self.chunk_hash_hmac_key);
+        return !hashing.isZeroKey(self.chunk_hash_key);
     }
 
-    /// Get the HMAC key if the shard is protected, null otherwise.
-    pub fn getHmacKey(self: ShardFooter) ?[32]u8 {
+    /// Get the chunk hash key if the shard is protected, null otherwise.
+    pub fn getChunkHashKey(self: ShardFooter) ?[32]u8 {
         if (self.isKeyed()) {
-            return self.chunk_hash_hmac_key;
+            return self.chunk_hash_key;
         }
         return null;
     }
@@ -235,10 +235,10 @@ pub const ShardBuilder = struct {
         }
     }
 
-    /// Set the HMAC key for chunk hash protection.
-    /// When set, chunk hashes in this shard are HMAC-transformed.
-    pub fn setHmacKey(self: *ShardBuilder, key: [32]u8) void {
-        self.footer.chunk_hash_hmac_key = key;
+    /// Set the key for chunk hash protection.
+    /// When set, chunk hashes in this shard are transformed using a keyed hash.
+    pub fn setChunkHashKey(self: *ShardBuilder, key: [32]u8) void {
+        self.footer.chunk_hash_key = key;
     }
 
     /// Set the creation timestamp (seconds since epoch).
@@ -357,21 +357,21 @@ pub const ShardReader = struct {
         return locations;
     }
 
-    /// Check if this shard has HMAC-protected chunk hashes.
+    /// Check if this shard has keyed hash protected chunk hashes.
     pub fn isKeyed(self: *const ShardReader) bool {
         return self.footer.isKeyed();
     }
 
-    /// Get the HMAC key if the shard is protected, null otherwise.
-    pub fn getHmacKey(self: *const ShardReader) ?[32]u8 {
-        return self.footer.getHmacKey();
+    /// Get the chunk hash key if the shard is protected, null otherwise.
+    pub fn getChunkHashKey(self: *const ShardReader) ?[32]u8 {
+        return self.footer.getChunkHashKey();
     }
 
     /// Transform a chunk hash for lookup in this shard.
-    /// If the shard is keyed, applies HMAC transformation.
+    /// If the shard is keyed, applies keyed hash transformation.
     /// If not keyed, returns the original hash.
     pub fn keyedChunkHash(self: *const ShardReader, chunk_hash: hashing.Hash) hashing.Hash {
-        return hashing.keyedChunkHash(chunk_hash, self.footer.chunk_hash_hmac_key);
+        return hashing.keyedChunkHash(chunk_hash, self.footer.chunk_hash_key);
     }
 
     /// Find a chunk location by its hash (handles keyed shards automatically).
@@ -536,45 +536,45 @@ test "shard parseCASInfo extracts chunk locations" {
 test "shard footer isKeyed returns false for zero key" {
     var footer = ShardFooter.init();
     try std.testing.expect(!footer.isKeyed());
-    try std.testing.expectEqual(@as(?[32]u8, null), footer.getHmacKey());
+    try std.testing.expectEqual(@as(?[32]u8, null), footer.getChunkHashKey());
 }
 
 test "shard footer isKeyed returns true for non-zero key" {
     var footer = ShardFooter.init();
-    footer.chunk_hash_hmac_key[0] = 42;
+    footer.chunk_hash_key[0] = 42;
 
     try std.testing.expect(footer.isKeyed());
 
-    const key = footer.getHmacKey();
+    const key = footer.getChunkHashKey();
     try std.testing.expect(key != null);
     try std.testing.expectEqual(@as(u8, 42), key.?[0]);
 }
 
-test "shard builder setHmacKey sets the key" {
+test "shard builder setChunkHashKey sets the key" {
     const allocator = std.testing.allocator;
     var builder = ShardBuilder.init(allocator);
     defer builder.deinit();
 
-    var hmac_key: [32]u8 = @splat(0);
-    hmac_key[0] = 123;
-    hmac_key[31] = 45;
+    var chunk_hash_key: [32]u8 = @splat(0);
+    chunk_hash_key[0] = 123;
+    chunk_hash_key[31] = 45;
 
-    builder.setHmacKey(hmac_key);
+    builder.setChunkHashKey(chunk_hash_key);
 
-    try std.testing.expectEqual(@as(u8, 123), builder.footer.chunk_hash_hmac_key[0]);
-    try std.testing.expectEqual(@as(u8, 45), builder.footer.chunk_hash_hmac_key[31]);
+    try std.testing.expectEqual(@as(u8, 123), builder.footer.chunk_hash_key[0]);
+    try std.testing.expectEqual(@as(u8, 45), builder.footer.chunk_hash_key[31]);
 }
 
-test "keyed shard stores and retrieves HMAC key" {
+test "keyed shard stores and retrieves chunk hash key" {
     const allocator = std.testing.allocator;
     var builder = ShardBuilder.init(allocator);
     defer builder.deinit();
 
-    var hmac_key: [32]u8 = undefined;
-    for (&hmac_key, 0..) |*b, i| {
+    var chunk_hash_key: [32]u8 = undefined;
+    for (&chunk_hash_key, 0..) |*b, i| {
         b.* = @truncate(i * 7);
     }
-    builder.setHmacKey(hmac_key);
+    builder.setChunkHashKey(chunk_hash_key);
     builder.setCreationTimestamp(1700000000);
     builder.setKeyExpiry(1700086400);
 
@@ -584,9 +584,9 @@ test "keyed shard stores and retrieves HMAC key" {
     var reader = try ShardReader.init(allocator, serialized);
 
     try std.testing.expect(reader.isKeyed());
-    const retrieved_key = reader.getHmacKey();
+    const retrieved_key = reader.getChunkHashKey();
     try std.testing.expect(retrieved_key != null);
-    try std.testing.expectEqualSlices(u8, &hmac_key, &retrieved_key.?);
+    try std.testing.expectEqualSlices(u8, &chunk_hash_key, &retrieved_key.?);
 
     try std.testing.expectEqual(@as(?u64, 1700000000), reader.getCreationTimestamp());
     try std.testing.expectEqual(@as(?u64, 1700086400), reader.getKeyExpiry());
@@ -597,9 +597,9 @@ test "keyed shard keyedChunkHash transforms hash" {
     var builder = ShardBuilder.init(allocator);
     defer builder.deinit();
 
-    var hmac_key: [32]u8 = @splat(0);
-    hmac_key[0] = 99;
-    builder.setHmacKey(hmac_key);
+    var chunk_hash_key: [32]u8 = @splat(0);
+    chunk_hash_key[0] = 99;
+    builder.setChunkHashKey(chunk_hash_key);
 
     const serialized = try builder.serialize();
     defer allocator.free(serialized);
@@ -610,7 +610,7 @@ test "keyed shard keyedChunkHash transforms hash" {
     const keyed_hash = reader.keyedChunkHash(original_hash);
 
     try std.testing.expect(!std.mem.eql(u8, &original_hash, &keyed_hash));
-    const expected_keyed = hashing.keyedChunkHash(original_hash, hmac_key);
+    const expected_keyed = hashing.keyedChunkHash(original_hash, chunk_hash_key);
     try std.testing.expectEqualSlices(u8, &expected_keyed, &keyed_hash);
 }
 
@@ -629,17 +629,17 @@ test "unkeyed shard keyedChunkHash returns original" {
     try std.testing.expectEqualSlices(u8, &original_hash, &keyed_hash);
 }
 
-test "keyed shard findChunkLocation with HMAC transformation" {
+test "keyed shard findChunkLocation with keyed hash transformation" {
     const allocator = std.testing.allocator;
     var builder = ShardBuilder.init(allocator);
     defer builder.deinit();
 
-    var hmac_key: [32]u8 = @splat(0);
-    hmac_key[0] = 77;
-    builder.setHmacKey(hmac_key);
+    var chunk_hash_key: [32]u8 = @splat(0);
+    chunk_hash_key[0] = 77;
+    builder.setChunkHashKey(chunk_hash_key);
 
     const original_chunk_hash = hashing.computeDataHash("chunk data");
-    const keyed_chunk_hash = hashing.keyedChunkHash(original_chunk_hash, hmac_key);
+    const keyed_chunk_hash = hashing.keyedChunkHash(original_chunk_hash, chunk_hash_key);
     const xorb_hash = hashing.computeDataHash("xorb");
 
     const cas_entries = [_]CASChunkSequenceEntry{
