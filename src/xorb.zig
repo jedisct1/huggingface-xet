@@ -51,6 +51,7 @@ pub const ChunkHeader = packed struct {
             0 => .None,
             1 => .LZ4,
             2 => .ByteGrouping4LZ4,
+            3 => .FullBitsliceLZ4,
             else => error.InvalidCompressionType,
         };
     }

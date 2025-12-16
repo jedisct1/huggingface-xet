@@ -120,6 +120,8 @@ pub const CompressionType = enum(u8) {
     LZ4 = 1,
     /// Byte grouping (groups of 4) followed by LZ4
     ByteGrouping4LZ4 = 2,
+    /// Full bitslice (bit-plane interleaving) followed by LZ4
+    FullBitsliceLZ4 = 3,
 };
 
 /// MDB shard header size in bytes

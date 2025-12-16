@@ -77,6 +77,11 @@ pub fn compress(
             defer allocator.free(grouped);
             return compressLZ4(allocator, grouped, data.len, .ByteGrouping4LZ4);
         },
+        .FullBitsliceLZ4 => {
+            const bitsliced = try applyFullBitslice(allocator, data);
+            defer allocator.free(bitsliced);
+            return compressLZ4(allocator, bitsliced, data.len, .FullBitsliceLZ4);
+        },
     }
 }
 
@@ -125,6 +130,11 @@ pub fn decompress(
             const lz4_decompressed = try lz4FrameDecompress(allocator, data, uncompressed_size);
             defer allocator.free(lz4_decompressed);
             return try reverseByteGrouping(allocator, lz4_decompressed);
+        },
+        .FullBitsliceLZ4 => {
+            const lz4_decompressed = try lz4FrameDecompress(allocator, data, uncompressed_size);
+            defer allocator.free(lz4_decompressed);
+            return try reverseFullBitslice(allocator, lz4_decompressed);
         },
     }
 }
@@ -216,6 +226,52 @@ pub fn reverseByteGrouping(allocator: std.mem.Allocator, data: []const u8) ![]u8
             result[4 * split + 2] = data[g2_offset + split];
         },
         else => {},
+    }
+
+    return result;
+}
+
+pub fn applyFullBitslice(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
+    const result = try allocator.alloc(u8, data.len);
+    errdefer allocator.free(result);
+    @memset(result, 0);
+
+    const n = data.len;
+    if (n == 0) return result;
+
+    for (0..n) |out_byte_idx| {
+        var out_byte: u8 = 0;
+        for (0..8) |out_bit_idx| {
+            const k = out_byte_idx * 8 + out_bit_idx;
+            const in_byte_idx = k % n;
+            const in_bit_idx = k / n;
+
+            const bit: u8 = (data[in_byte_idx] >> @intCast(in_bit_idx)) & 1;
+            out_byte |= bit << @intCast(out_bit_idx);
+        }
+        result[out_byte_idx] = out_byte;
+    }
+
+    return result;
+}
+
+pub fn reverseFullBitslice(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
+    const result = try allocator.alloc(u8, data.len);
+    errdefer allocator.free(result);
+    @memset(result, 0);
+
+    const n = data.len;
+    if (n == 0) return result;
+
+    for (0..n) |in_byte_idx| {
+        for (0..8) |in_bit_idx| {
+            const k = in_byte_idx * 8 + in_bit_idx;
+            const orig_byte_idx = k % n;
+            const orig_bit_idx = k / n;
+
+            const bit: u8 = (data[in_byte_idx] >> @intCast(in_bit_idx)) & 1;
+            result[orig_byte_idx] |= bit << @intCast(orig_bit_idx);
+        }
     }
 
     return result;
@@ -497,6 +553,131 @@ test "ByteGrouping4LZ4 with model-like data" {
         allocator,
         bg4_result.data,
         bg4_result.type,
+        data.len,
+    );
+    defer allocator.free(decompressed);
+
+    try std.testing.expectEqualSlices(u8, data, decompressed);
+}
+
+test "full bitslice with 8 bytes" {
+    const allocator = std.testing.allocator;
+    const data = [_]u8{ 0b11111111, 0b00000000, 0b10101010, 0b01010101, 0b11110000, 0b00001111, 0b11001100, 0b00110011 };
+
+    const sliced = try applyFullBitslice(allocator, &data);
+    defer allocator.free(sliced);
+
+    const unsliced = try reverseFullBitslice(allocator, sliced);
+    defer allocator.free(unsliced);
+
+    try std.testing.expectEqualSlices(u8, &data, unsliced);
+}
+
+test "full bitslice round trip" {
+    const allocator = std.testing.allocator;
+    const original = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 };
+
+    const sliced = try applyFullBitslice(allocator, &original);
+    defer allocator.free(sliced);
+
+    const unsliced = try reverseFullBitslice(allocator, sliced);
+    defer allocator.free(unsliced);
+
+    try std.testing.expectEqualSlices(u8, &original, unsliced);
+}
+
+test "full bitslice with single byte" {
+    const allocator = std.testing.allocator;
+    const data = [_]u8{0b10110100};
+
+    const sliced = try applyFullBitslice(allocator, &data);
+    defer allocator.free(sliced);
+
+    try std.testing.expectEqualSlices(u8, &data, sliced);
+}
+
+test "full bitslice large data round trip" {
+    const allocator = std.testing.allocator;
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    const sizes = [_]usize{
+        64 * 1024,
+        64 * 1024 - 53,
+        64 * 1024 + 135,
+        1000,
+        1,
+        7,
+        8,
+        9,
+        15,
+        16,
+        17,
+    };
+
+    for (sizes) |size| {
+        const data = try allocator.alloc(u8, size);
+        defer allocator.free(data);
+        random.bytes(data);
+
+        const sliced = try applyFullBitslice(allocator, data);
+        defer allocator.free(sliced);
+
+        const unsliced = try reverseFullBitslice(allocator, sliced);
+        defer allocator.free(unsliced);
+
+        try std.testing.expectEqualSlices(u8, data, unsliced);
+    }
+}
+
+test "FullBitsliceLZ4 compression and decompression" {
+    const allocator = std.testing.allocator;
+    const base_pattern = [_]u8{ 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0 };
+    const pattern = base_pattern ++ base_pattern ++ base_pattern ++ base_pattern ++ base_pattern ++
+        base_pattern ++ base_pattern ++ base_pattern ++ base_pattern ++ base_pattern ++
+        base_pattern ++ base_pattern ++ base_pattern ++ base_pattern ++ base_pattern ++
+        base_pattern ++ base_pattern ++ base_pattern ++ base_pattern ++ base_pattern;
+
+    const compressed_result = try compress(allocator, &pattern, .FullBitsliceLZ4);
+    defer allocator.free(compressed_result.data);
+
+    try std.testing.expect(compressed_result.data.len < pattern.len);
+    try std.testing.expectEqual(constants.CompressionType.FullBitsliceLZ4, compressed_result.type);
+
+    const decompressed = try decompress(
+        allocator,
+        compressed_result.data,
+        compressed_result.type,
+        pattern.len,
+    );
+    defer allocator.free(decompressed);
+
+    try std.testing.expectEqualSlices(u8, &pattern, decompressed);
+}
+
+test "FullBitsliceLZ4 with model-like data" {
+    const allocator = std.testing.allocator;
+    var data = try allocator.alloc(u8, 1024);
+    defer allocator.free(data);
+
+    for (0..256) |i| {
+        const idx = i * 4;
+        data[idx] = @truncate(i);
+        data[idx + 1] = 0;
+        data[idx + 2] = 0;
+        data[idx + 3] = 0x3F;
+    }
+
+    const lz4_result = try compress(allocator, data, .LZ4);
+    defer allocator.free(lz4_result.data);
+
+    const fbs_result = try compress(allocator, data, .FullBitsliceLZ4);
+    defer allocator.free(fbs_result.data);
+
+    const decompressed = try decompress(
+        allocator,
+        fbs_result.data,
+        fbs_result.type,
         data.len,
     );
     defer allocator.free(decompressed);

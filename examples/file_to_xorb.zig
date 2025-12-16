@@ -301,7 +301,7 @@ fn printUsage(prog_name: []const u8, stderr: anytype) !void {
         \\Options:
         \\  -o, --output <dir>    Output directory for xorb files (default: current directory)
         \\  -c, --compression <type>
-        \\                        Compression type: none, lz4, bg4 (default: lz4)
+        \\                        Compression type: none, lz4, bg4, fbs (default: lz4)
         \\  -v, --verbose         Verbose output
         \\  -h, --help            Show this help message
         \\
@@ -362,9 +362,11 @@ pub fn main() !void {
                 compression_type = .LZ4;
             } else if (std.mem.eql(u8, comp_str, "bg4")) {
                 compression_type = .ByteGrouping4LZ4;
+            } else if (std.mem.eql(u8, comp_str, "fbs")) {
+                compression_type = .FullBitsliceLZ4;
             } else {
                 try stderr.print("Error: Unknown compression type: {s}\n", .{comp_str});
-                try stderr.print("Valid types: none, lz4, bg4\n", .{});
+                try stderr.print("Valid types: none, lz4, bg4, fbs\n", .{});
                 return error.InvalidArgs;
             }
         } else if (std.mem.eql(u8, arg, "-v") or std.mem.eql(u8, arg, "--verbose")) {
