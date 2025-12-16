@@ -156,4 +156,5 @@ All constants, algorithms, and formats match the reference Rust implementation b
 
 ## Links
 
+- [XET Protocol Draft Specification](https://jedisct1.github.io/draft-denis-xet/draft-denis-xet.html)
 - [XET Protocol Documentation](https://huggingface.co/docs/xet/index)
