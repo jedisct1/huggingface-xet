@@ -67,25 +67,6 @@ pub const FileList = struct {
         self.allocator.free(self.files);
     }
 
-    /// Get files that have XET hashes (large files stored with XET protocol)
-    pub fn getXetFiles(self: *const FileList) []const FileInfo {
-        var count: usize = 0;
-        for (self.files) |file| {
-            if (file.xet_hash != null) count += 1;
-        }
-        if (count == 0) return &.{};
-
-        const result = self.allocator.alloc(FileInfo, count) catch return &.{};
-        var i: usize = 0;
-        for (self.files) |file| {
-            if (file.xet_hash != null) {
-                result[i] = file;
-                i += 1;
-            }
-        }
-        return result;
-    }
-
     /// Find a file by path (exact match or suffix match)
     pub fn findFile(self: *const FileList, name: []const u8) ?*const FileInfo {
         for (self.files) |*file| {
