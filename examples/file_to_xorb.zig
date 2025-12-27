@@ -42,6 +42,7 @@ const FileProcessingResult = struct {
 
 const XorbCreator = struct {
     allocator: std.mem.Allocator,
+    io: std.Io,
     compression_type: xet.constants.CompressionType,
     max_xorb_size: usize,
     verbose: bool,
@@ -56,11 +57,13 @@ const XorbCreator = struct {
 
     fn init(
         allocator: std.mem.Allocator,
+        io: std.Io,
         compression_type: xet.constants.CompressionType,
         verbose: bool,
     ) XorbCreator {
         return .{
             .allocator = allocator,
+            .io = io,
             .compression_type = compression_type,
             .max_xorb_size = xet.constants.MaxXorbSize,
             .verbose = verbose,
@@ -161,15 +164,13 @@ const XorbCreator = struct {
     }
 
     fn processFile(self: *XorbCreator, file_path: []const u8) !FileProcessingResult {
-        const file = try std.fs.cwd().openFile(file_path, .{});
-        defer file.close();
+        const file = try std.Io.Dir.openFile(.cwd(), self.io, file_path, .{});
+        defer file.close(self.io);
 
-        const file_size = try file.getEndPos();
-
-        return try self.processFileHandle(file, file_size);
+        return try self.processFileHandle(file);
     }
 
-    fn processFileHandle(self: *XorbCreator, file: std.fs.File, file_size: u64) !FileProcessingResult {
+    fn processFileHandle(self: *XorbCreator, file: std.Io.File) !FileProcessingResult {
         var chunker = xet.chunking.Chunker.init();
         var total_chunks: u32 = 0;
         var dedup_savings: u64 = 0;
@@ -179,13 +180,17 @@ const XorbCreator = struct {
         const read_buffer = try self.allocator.alloc(u8, buffer_size);
         defer self.allocator.free(read_buffer);
 
+        var reader_buffer: [64 * 1024]u8 = undefined;
+        var file_reader = std.Io.File.Reader.init(file, self.io, &reader_buffer);
+        const file_size = file_reader.getSize() catch 0;
+
         var accumulated = std.ArrayList(u8).empty;
         defer accumulated.deinit(self.allocator);
 
         var local_offset: usize = 0;
 
         while (true) {
-            const bytes_read = file.read(read_buffer) catch |err| {
+            const bytes_read = file_reader.interface.readSliceShort(read_buffer) catch |err| {
                 if (err == error.EndOfStream) break;
                 return err;
             };
@@ -261,30 +266,31 @@ const XorbCreator = struct {
 
 fn writeXorbs(
     allocator: std.mem.Allocator,
+    io: std.Io,
     result: *const FileProcessingResult,
     output_dir: []const u8,
     verbose: bool,
 ) !void {
-    var dir: ?std.fs.Dir = null;
+    var dir: ?std.Io.Dir = null;
 
     if (!std.mem.eql(u8, output_dir, ".")) {
-        std.fs.cwd().makePath(output_dir) catch |err| {
+        std.Io.Dir.createDirPath(.cwd(), io, output_dir) catch |err| {
             if (err != error.PathAlreadyExists) return err;
         };
-        dir = try std.fs.cwd().openDir(output_dir, .{});
+        dir = try std.Io.Dir.openDir(.cwd(), io, output_dir, .{});
     }
-    defer if (dir) |*d| d.close();
+    defer if (dir) |d| d.close(io);
 
     for (result.xorbs.items) |xorb_info| {
         const hash_hex = xet.hashing.hashToHex(xorb_info.hash);
         const filename = try std.fmt.allocPrint(allocator, "{s}.xorb", .{hash_hex});
         defer allocator.free(filename);
 
-        const target_dir = dir orelse std.fs.cwd();
-        const file = try target_dir.createFile(filename, .{});
-        defer file.close();
+        const target_dir = dir orelse std.Io.Dir.cwd();
+        const file = try std.Io.Dir.createFile(target_dir, io, filename, .{});
+        defer file.close(io);
 
-        try file.writeAll(xorb_info.serialized);
+        try file.writeStreamingAll(io, xorb_info.serialized);
 
         if (verbose) {
             std.debug.print("  Written: {s} ({d} bytes)\n", .{ filename, xorb_info.serialized.len });
@@ -317,13 +323,17 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
+    var io_instance = std.Io.Threaded.init(allocator, .{});
+    defer io_instance.deinit();
+    const io = io_instance.io();
+
     var stdout_buffer: [4096]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buffer);
     defer stdout_writer.interface.flush() catch {};
     const stdout = &stdout_writer.interface;
 
     var stderr_buffer: [4096]u8 = undefined;
-    var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
+    var stderr_writer = std.Io.File.stderr().writer(io, &stderr_buffer);
     defer stderr_writer.interface.flush() catch {};
     const stderr = &stderr_writer.interface;
 
@@ -393,7 +403,7 @@ pub fn main() !void {
 
     const file_path = input_file.?;
 
-    std.fs.cwd().access(file_path, .{}) catch {
+    std.Io.Dir.access(.cwd(), io, file_path, .{}) catch {
         try stderr.print("Error: File not found: {s}\n", .{file_path});
         try stderr.flush();
         return error.FileNotFound;
@@ -406,7 +416,7 @@ pub fn main() !void {
         try stdout.flush();
     }
 
-    var creator = XorbCreator.init(allocator, compression_type, verbose);
+    var creator = XorbCreator.init(allocator, io, compression_type, verbose);
     defer creator.deinit();
 
     var result = try creator.processFile(file_path);
@@ -446,7 +456,7 @@ pub fn main() !void {
         try stdout.flush();
     }
 
-    try writeXorbs(allocator, &result, output_dir, verbose);
+    try writeXorbs(allocator, io, &result, output_dir, verbose);
 
     try stdout.print("\nOutput directory: {s}\n", .{output_dir});
 

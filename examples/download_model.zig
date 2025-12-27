@@ -26,13 +26,17 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
+    var io_instance = std.Io.Threaded.init(allocator, .{});
+    defer io_instance.deinit();
+    const io = io_instance.io();
+
     var stdout_buffer: [4096]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buffer);
     defer stdout_writer.interface.flush() catch {};
     const stdout = &stdout_writer.interface;
 
     var stderr_buffer: [4096]u8 = undefined;
-    var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
+    var stderr_writer = std.Io.File.stderr().writer(io, &stderr_buffer);
     defer stderr_writer.interface.flush() catch {};
     const stderr = &stderr_writer.interface;
 
@@ -52,10 +56,6 @@ pub fn main() !void {
 
     const repo_id = args[1];
     const filename: ?[]const u8 = if (args.len > 2) args[2] else null;
-
-    var io_instance = std.Io.Threaded.init(allocator);
-    defer io_instance.deinit();
-    const io = io_instance.io();
 
     try stdout.print("Fetching file list for {s}...\n", .{repo_id});
     try stdout.flush();
@@ -115,7 +115,7 @@ pub fn main() !void {
 
     const file = selected_file.?;
     const file_hash_hex = file.xet_hash.?;
-    const output_path = std.fs.path.basename(file.path);
+    const output_path = std.Io.Dir.path.basename(file.path);
 
     const config = xet.model_download.DownloadConfig{
         .repo_id = repo_id,
@@ -156,9 +156,10 @@ pub fn main() !void {
     const elapsed_ms = @as(f64, @floatFromInt(elapsed_ns)) / std.time.ns_per_ms;
     const elapsed_s = elapsed_ms / 1000.0;
 
-    const output_file = try std.fs.cwd().openFile(output_path, .{});
-    defer output_file.close();
-    const file_size = try output_file.getEndPos();
+    const output_file = try std.Io.Dir.openFile(.cwd(), io, output_path, .{});
+    defer output_file.close(io);
+    const file_stat = try output_file.stat(io);
+    const file_size = file_stat.size;
 
     try stdout.print("Download complete!\n", .{});
     try stdout.print("  Time: {d:.2}s\n", .{elapsed_s});

@@ -44,7 +44,7 @@ pub fn main() !void {
     }
 
     {
-        var io_instance = std.Io.Threaded.init(allocator);
+        var io_instance = std.Io.Threaded.init(allocator, .{});
         defer io_instance.deinit();
         const io = io_instance.io();
 
@@ -137,7 +137,7 @@ pub fn main() !void {
 
     var timer = try std.time.Timer.start();
 
-    var download_io_instance = std.Io.Threaded.init(allocator);
+    var download_io_instance = std.Io.Threaded.init(allocator, .{});
     defer download_io_instance.deinit();
     const download_io = download_io_instance.io();
 
@@ -155,9 +155,10 @@ pub fn main() !void {
     std.debug.print("\nDownload complete!\n", .{});
     std.debug.print("  Time: {d}ms\n", .{duration_ms});
 
-    const out_file = try std.fs.cwd().openFile(output_path, .{});
-    defer out_file.close();
-    const file_size = try out_file.getEndPos();
+    const out_file = try std.Io.Dir.openFile(.cwd(), download_io, output_path, .{});
+    defer out_file.close(download_io);
+    const file_stat = try out_file.stat(download_io);
+    const file_size = file_stat.size;
     const size_mb = @as(f64, @floatFromInt(file_size)) / (1024.0 * 1024.0);
 
     std.debug.print("  Size: {d:.2} MB\n", .{size_mb});

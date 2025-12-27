@@ -327,11 +327,11 @@ pub fn downloadModelToFile(
     output_path: []const u8,
 ) !void {
     // Open output file for writing
-    const file = try std.fs.cwd().createFile(output_path, .{});
-    defer file.close();
+    const file = try std.Io.Dir.createFile(.cwd(), io, output_path, .{});
+    defer file.close(io);
 
     var file_buffer: [4096]u8 = undefined;
-    var file_writer = file.writer(&file_buffer);
+    var file_writer = file.writer(io, &file_buffer);
     defer file_writer.interface.flush() catch {};
 
     try downloadModelToWriter(allocator, io, config, &file_writer.interface);
@@ -439,11 +439,11 @@ pub fn downloadModelToFileParallel(
     output_path: []const u8,
     compute_hashes: bool,
 ) !void {
-    const file = try std.fs.cwd().createFile(output_path, .{});
-    defer file.close();
+    const file = try std.Io.Dir.createFile(.cwd(), io, output_path, .{});
+    defer file.close(io);
 
     var file_buffer: [4096]u8 = undefined;
-    var file_writer = file.writer(&file_buffer);
+    var file_writer = file.writer(io, &file_buffer);
     defer file_writer.interface.flush() catch {};
 
     try downloadModelToWriterParallel(allocator, io, config, &file_writer.interface, compute_hashes);

@@ -6,16 +6,11 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var stdout_buffer: [4096]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
-    defer stdout_writer.interface.flush() catch {};
-    const stdout = &stdout_writer.interface;
-
-    try stdout.print("XET Protocol Implementation in Zig\n", .{});
-    try stdout.print("==================================\n\n", .{});
+    std.debug.print("XET Protocol Implementation in Zig\n", .{});
+    std.debug.print("==================================\n\n", .{});
 
     // Demonstrate chunking
-    try stdout.print("1. Content-Defined Chunking Demo:\n", .{});
+    std.debug.print("1. Content-Defined Chunking Demo:\n", .{});
     const base_str = "Hello, World! This is a test of the XET protocol chunking system. ";
     var sample_data_list = std.ArrayList(u8).empty;
     defer sample_data_list.deinit(allocator);
@@ -27,32 +22,32 @@ pub fn main() !void {
     var chunks = try xet.chunking.chunkBuffer(allocator, sample_data);
     defer chunks.deinit(allocator);
 
-    try stdout.print("   - Input size: {} bytes\n", .{sample_data.len});
-    try stdout.print("   - Number of chunks: {}\n", .{chunks.items.len});
+    std.debug.print("   - Input size: {} bytes\n", .{sample_data.len});
+    std.debug.print("   - Number of chunks: {}\n", .{chunks.items.len});
 
     for (chunks.items, 0..) |chunk, i| {
-        try stdout.print("   - Chunk {}: {} bytes (offset {}-{})\n", .{
+        std.debug.print("   - Chunk {}: {} bytes (offset {}-{})\n", .{
             i,
             chunk.size(),
             chunk.start,
             chunk.end,
         });
         if (i >= 2) {
-            try stdout.print("   ...\n", .{});
+            std.debug.print("   ...\n", .{});
             break;
         }
     }
 
     // Demonstrate hashing
-    try stdout.print("\n2. BLAKE3 Hashing Demo:\n", .{});
+    std.debug.print("\n2. BLAKE3 Hashing Demo:\n", .{});
     const test_data = "test data";
     const data_hash = xet.hashing.computeDataHash(test_data);
     const hash_hex = xet.hashing.hashToHex(data_hash);
-    try stdout.print("   - Data: \"{s}\"\n", .{test_data});
-    try stdout.print("   - Hash: {s}\n", .{hash_hex});
+    std.debug.print("   - Data: \"{s}\"\n", .{test_data});
+    std.debug.print("   - Hash: {s}\n", .{hash_hex});
 
     // Demonstrate Merkle tree
-    try stdout.print("\n3. Merkle Tree Demo:\n", .{});
+    std.debug.print("\n3. Merkle Tree Demo:\n", .{});
     const merkle_chunks = [_]xet.hashing.MerkleNode{
         .{ .hash = xet.hashing.computeDataHash("chunk1"), .size = 6 },
         .{ .hash = xet.hashing.computeDataHash("chunk2"), .size = 6 },
@@ -60,11 +55,11 @@ pub fn main() !void {
     };
     const merkle_root = try xet.hashing.buildMerkleTree(allocator, &merkle_chunks);
     const merkle_hex = xet.hashing.hashToHex(merkle_root);
-    try stdout.print("   - Chunks: {}\n", .{merkle_chunks.len});
-    try stdout.print("   - Merkle root: {s}\n", .{merkle_hex});
+    std.debug.print("   - Chunks: {}\n", .{merkle_chunks.len});
+    std.debug.print("   - Merkle root: {s}\n", .{merkle_hex});
 
     // Demonstrate Xorb serialization
-    try stdout.print("\n4. Xorb Serialization Demo:\n", .{});
+    std.debug.print("\n4. Xorb Serialization Demo:\n", .{});
     var builder = xet.xorb.XorbBuilder.init(allocator);
     defer builder.deinit();
 
@@ -78,12 +73,12 @@ pub fn main() !void {
     const xorb_hash = try builder.computeHash();
     const xorb_hex = xet.hashing.hashToHex(xorb_hash);
 
-    try stdout.print("   - Chunks in xorb: {}\n", .{builder.chunks.items.len});
-    try stdout.print("   - Serialized size: {} bytes\n", .{xorb_data.len});
-    try stdout.print("   - Xorb hash: {s}\n", .{xorb_hex});
+    std.debug.print("   - Chunks in xorb: {}\n", .{builder.chunks.items.len});
+    std.debug.print("   - Serialized size: {} bytes\n", .{xorb_data.len});
+    std.debug.print("   - Xorb hash: {s}\n", .{xorb_hex});
 
     // Demonstrate Shard format
-    try stdout.print("\n5. Shard Format Demo:\n", .{});
+    std.debug.print("\n5. Shard Format Demo:\n", .{});
     var shard_builder = xet.shard.ShardBuilder.init(allocator);
     defer shard_builder.deinit();
 
@@ -103,10 +98,10 @@ pub fn main() !void {
     const shard_data = try shard_builder.serialize();
     defer allocator.free(shard_data);
 
-    try stdout.print("   - Shard size: {} bytes\n", .{shard_data.len});
-    try stdout.print("   - Header: {} bytes\n", .{xet.constants.MdbHeaderSize});
-    try stdout.print("   - Footer: {} bytes\n", .{xet.constants.MdbFooterSize});
+    std.debug.print("   - Shard size: {} bytes\n", .{shard_data.len});
+    std.debug.print("   - Header: {} bytes\n", .{xet.constants.MdbHeaderSize});
+    std.debug.print("   - Footer: {} bytes\n", .{xet.constants.MdbFooterSize});
 
-    try stdout.print("\n✓ All XET protocol components working!\n", .{});
-    try stdout.print("\nRun 'zig build test' to run the comprehensive test suite.\n", .{});
+    std.debug.print("\nAll XET protocol components working!\n", .{});
+    std.debug.print("\nRun 'zig build test' to run the comprehensive test suite.\n", .{});
 }
