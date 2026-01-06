@@ -318,14 +318,16 @@ fn printUsage(prog_name: []const u8, stderr: anytype) !void {
     , .{ prog_name, prog_name, prog_name });
 }
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
+    const io = init.io;
 
-    var io_instance = std.Io.Threaded.init(allocator, .{});
-    defer io_instance.deinit();
-    const io = io_instance.io();
+    var args_iter = std.process.Args.Iterator.init(init.minimal.args);
+    var args: std.ArrayList([]const u8) = .empty;
+    defer args.deinit(allocator);
+    while (args_iter.next()) |arg| {
+        try args.append(allocator, arg);
+    }
 
     var stdout_buffer: [4096]u8 = undefined;
     var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buffer);
@@ -337,35 +339,32 @@ pub fn main() !void {
     defer stderr_writer.interface.flush() catch {};
     const stderr = &stderr_writer.interface;
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
-
     var input_file: ?[]const u8 = null;
     var output_dir: []const u8 = ".";
     var compression_type: xet.constants.CompressionType = .LZ4;
     var verbose = false;
 
     var i: usize = 1;
-    while (i < args.len) : (i += 1) {
-        const arg = args[i];
+    while (i < args.items.len) : (i += 1) {
+        const arg = args.items[i];
 
         if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
-            try printUsage(args[0], stdout);
+            try printUsage(args.items[0], stdout);
             return;
         } else if (std.mem.eql(u8, arg, "-o") or std.mem.eql(u8, arg, "--output")) {
             i += 1;
-            if (i >= args.len) {
+            if (i >= args.items.len) {
                 try stderr.print("Error: --output requires an argument\n", .{});
                 return error.InvalidArgs;
             }
-            output_dir = args[i];
+            output_dir = args.items[i];
         } else if (std.mem.eql(u8, arg, "-c") or std.mem.eql(u8, arg, "--compression")) {
             i += 1;
-            if (i >= args.len) {
+            if (i >= args.items.len) {
                 try stderr.print("Error: --compression requires an argument\n", .{});
                 return error.InvalidArgs;
             }
-            const comp_str = args[i];
+            const comp_str = args.items[i];
             if (std.mem.eql(u8, comp_str, "none")) {
                 compression_type = .None;
             } else if (std.mem.eql(u8, comp_str, "lz4")) {
@@ -383,7 +382,7 @@ pub fn main() !void {
             verbose = true;
         } else if (arg[0] == '-') {
             try stderr.print("Error: Unknown option: {s}\n", .{arg});
-            try printUsage(args[0], stderr);
+            try printUsage(args.items[0], stderr);
             return error.InvalidArgs;
         } else {
             if (input_file != null) {
@@ -396,7 +395,7 @@ pub fn main() !void {
 
     if (input_file == null) {
         try stderr.print("Error: No input file specified\n\n", .{});
-        try printUsage(args[0], stderr);
+        try printUsage(args.items[0], stderr);
         try stderr.flush();
         return error.InvalidArgs;
     }

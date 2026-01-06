@@ -210,7 +210,7 @@ pub const ParallelFetcher = struct {
             };
         }
 
-        group.awaitUncancelable(self.io);
+        group.await(self.io) catch unreachable;
 
         if (error_occurred.load(.acquire)) {
             for (results) |*opt_result| {

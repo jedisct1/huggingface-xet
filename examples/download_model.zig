@@ -21,14 +21,16 @@ const xet = @import("xet");
 ///   # Download a specific file
 ///   HF_TOKEN=hf_xxx zig build run-example-download -- jedisct1/MiMo-7B-RL-GGUF MiMo-7B-RL-Q8_0.gguf
 ///
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
+    const io = init.io;
 
-    var io_instance = std.Io.Threaded.init(allocator, .{});
-    defer io_instance.deinit();
-    const io = io_instance.io();
+    var args_iter = std.process.Args.Iterator.init(init.minimal.args);
+    var args: std.ArrayList([]const u8) = .empty;
+    defer args.deinit(allocator);
+    while (args_iter.next()) |arg| {
+        try args.append(allocator, arg);
+    }
 
     var stdout_buffer: [4096]u8 = undefined;
     var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buffer);
@@ -40,22 +42,19 @@ pub fn main() !void {
     defer stderr_writer.interface.flush() catch {};
     const stderr = &stderr_writer.interface;
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
-
-    if (args.len < 2) {
-        try stderr.print("Usage: {s} <repo_id> [filename]\n", .{args[0]});
+    if (args.items.len < 2) {
+        try stderr.print("Usage: {s} <repo_id> [filename]\n", .{args.items[0]});
         try stderr.print("\nExamples:\n", .{});
         try stderr.print("  # List files in a repository\n", .{});
-        try stderr.print("  HF_TOKEN=hf_xxx {s} jedisct1/MiMo-7B-RL-GGUF\n\n", .{args[0]});
+        try stderr.print("  HF_TOKEN=hf_xxx {s} jedisct1/MiMo-7B-RL-GGUF\n\n", .{args.items[0]});
         try stderr.print("  # Download a specific file\n", .{});
-        try stderr.print("  HF_TOKEN=hf_xxx {s} jedisct1/MiMo-7B-RL-GGUF MiMo-7B-RL-Q8_0.gguf\n", .{args[0]});
+        try stderr.print("  HF_TOKEN=hf_xxx {s} jedisct1/MiMo-7B-RL-GGUF MiMo-7B-RL-Q8_0.gguf\n", .{args.items[0]});
         try stderr.flush();
         return error.InvalidArgs;
     }
 
-    const repo_id = args[1];
-    const filename: ?[]const u8 = if (args.len > 2) args[2] else null;
+    const repo_id = args.items[1];
+    const filename: ?[]const u8 = if (args.items.len > 2) args.items[2] else null;
 
     try stdout.print("Fetching file list for {s}...\n", .{repo_id});
     try stdout.flush();
@@ -63,6 +62,7 @@ pub fn main() !void {
     var file_list = try xet.model_download.listFiles(
         allocator,
         io,
+        init.minimal.environ,
         repo_id,
         "model",
         "main",
@@ -108,7 +108,7 @@ pub fn main() !void {
             }
         }
         try stdout.print("\nTo download a file, run:\n", .{});
-        try stdout.print("  {s} {s} <filename>\n", .{ args[0], repo_id });
+        try stdout.print("  {s} {s} <filename>\n", .{ args.items[0], repo_id });
         try stdout.flush();
         return;
     }
@@ -137,7 +137,7 @@ pub fn main() !void {
 
     const start_time = try std.time.Instant.now();
 
-    xet.model_download.downloadModelToFile(allocator, io, config, output_path) catch |err| {
+    xet.model_download.downloadModelToFile(allocator, io, init.minimal.environ, config, output_path) catch |err| {
         try stderr.print("\nError: Download failed: {}\n", .{err});
         if (err == error.EnvironmentVariableNotFound) {
             try stderr.print("Make sure HF_TOKEN environment variable is set.\n", .{});

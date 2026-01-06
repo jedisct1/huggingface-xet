@@ -16,26 +16,28 @@ const xet = @import("xet");
 ///
 ///   # List available files in a repository
 ///   HF_TOKEN=hf_xxx zig build run-example-parallel -- apple/DiffuCoder-7B-Instruct
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    var args_iter = std.process.Args.Iterator.init(init.minimal.args);
+    var args: std.ArrayList([]const u8) = .empty;
+    defer args.deinit(allocator);
+    while (args_iter.next()) |arg| {
+        try args.append(allocator, arg);
+    }
 
-    if (args.len < 2) {
-        std.debug.print("Usage: {s} <repo_id> [filename]\n", .{args[0]});
+    if (args.items.len < 2) {
+        std.debug.print("Usage: {s} <repo_id> [filename]\n", .{args.items[0]});
         std.debug.print("\nExamples:\n", .{});
         std.debug.print("  # List files in a repository\n", .{});
-        std.debug.print("  HF_TOKEN=hf_xxx {s} jedisct1/MiMo-7B-RL-GGUF\n\n", .{args[0]});
+        std.debug.print("  HF_TOKEN=hf_xxx {s} jedisct1/MiMo-7B-RL-GGUF\n\n", .{args.items[0]});
         std.debug.print("  # Download a specific file\n", .{});
-        std.debug.print("  HF_TOKEN=hf_xxx {s} jedisct1/MiMo-7B-RL-GGUF MiMo-7B-RL-Q8_0.gguf\n", .{args[0]});
+        std.debug.print("  HF_TOKEN=hf_xxx {s} jedisct1/MiMo-7B-RL-GGUF MiMo-7B-RL-Q8_0.gguf\n", .{args.items[0]});
         return error.InvalidArgs;
     }
 
-    const repo_id = args[1];
-    const filename: ?[]const u8 = if (args.len > 2) args[2] else null;
+    const repo_id = args.items[1];
+    const filename: ?[]const u8 = if (args.items.len > 2) args.items[2] else null;
 
     var xet_files: std.ArrayList(xet.model_download.FileInfo) = .empty;
     defer {
@@ -44,15 +46,14 @@ pub fn main() !void {
     }
 
     {
-        var io_instance = std.Io.Threaded.init(allocator, .{});
-        defer io_instance.deinit();
-        const io = io_instance.io();
+        const io = init.io;
 
         std.debug.print("Fetching file list for {s}...\n", .{repo_id});
 
         var file_list = try xet.model_download.listFiles(
             allocator,
             io,
+            init.minimal.environ,
             repo_id,
             "model",
             "main",
@@ -113,7 +114,7 @@ pub fn main() !void {
             }
         }
         std.debug.print("\nTo download a file, run:\n", .{});
-        std.debug.print("  {s} {s} <filename>\n", .{ args[0], repo_id });
+        std.debug.print("  {s} {s} <filename>\n", .{ args.items[0], repo_id });
         return;
     }
 
@@ -137,13 +138,12 @@ pub fn main() !void {
 
     var timer = try std.time.Timer.start();
 
-    var download_io_instance = std.Io.Threaded.init(allocator, .{});
-    defer download_io_instance.deinit();
-    const download_io = download_io_instance.io();
+    const download_io = init.io;
 
     try xet.model_download.downloadModelToFileParallel(
         allocator,
         download_io,
+        init.minimal.environ,
         config,
         output_path,
         false,

@@ -7,11 +7,11 @@ const OwnedToken = struct {
     value: []const u8,
     allocator: ?Allocator,
 
-    fn init(allocator: Allocator, provided: ?[]const u8) !OwnedToken {
+    fn init(allocator: Allocator, environ: std.process.Environ, provided: ?[]const u8) !OwnedToken {
         if (provided) |token| {
             return .{ .value = token, .allocator = null };
         }
-        const token = try std.process.getEnvVarOwned(allocator, "HF_TOKEN");
+        const token = try std.process.Environ.getAlloc(environ, allocator, "HF_TOKEN");
         return .{ .value = token, .allocator = allocator };
     }
 
@@ -81,12 +81,13 @@ pub const FileList = struct {
 pub fn listFiles(
     allocator: Allocator,
     io: std.Io,
+    environ: std.process.Environ,
     repo_id: []const u8,
     repo_type: []const u8,
     revision: []const u8,
     hf_token: ?[]const u8,
 ) !FileList {
-    const token = try OwnedToken.init(allocator, hf_token);
+    const token = try OwnedToken.init(allocator, environ, hf_token);
     defer token.deinit();
 
     const tree_url = try std.fmt.allocPrint(
@@ -173,12 +174,13 @@ pub fn listFiles(
 pub fn getFileXetHash(
     allocator: Allocator,
     io: std.Io,
+    environ: std.process.Environ,
     repo_id: []const u8,
     revision: []const u8,
     filepath: []const u8,
     hf_token: ?[]const u8,
 ) ![]const u8 {
-    const token = try OwnedToken.init(allocator, hf_token);
+    const token = try OwnedToken.init(allocator, environ, hf_token);
     defer token.deinit();
 
     const resolve_url = try std.fmt.allocPrint(
@@ -323,6 +325,7 @@ fn requestXetToken(
 pub fn downloadModelToFile(
     allocator: Allocator,
     io: std.Io,
+    environ: std.process.Environ,
     config: DownloadConfig,
     output_path: []const u8,
 ) !void {
@@ -334,7 +337,7 @@ pub fn downloadModelToFile(
     var file_writer = file.writer(io, &file_buffer);
     defer file_writer.interface.flush() catch {};
 
-    try downloadModelToWriter(allocator, io, config, &file_writer.interface);
+    try downloadModelToWriter(allocator, io, environ, config, &file_writer.interface);
 }
 
 /// Download a model from Hugging Face and write it to a writer
@@ -357,10 +360,11 @@ pub fn downloadModelToFile(
 pub fn downloadModelToWriter(
     allocator: Allocator,
     io: std.Io,
+    environ: std.process.Environ,
     config: DownloadConfig,
     writer: *std.Io.Writer,
 ) !void {
-    const hf_token = try OwnedToken.init(allocator, config.hf_token);
+    const hf_token = try OwnedToken.init(allocator, environ, config.hf_token);
     defer hf_token.deinit();
 
     var xet_token = try requestXetToken(allocator, io, config, hf_token.value);
@@ -397,11 +401,12 @@ pub fn downloadModelToWriter(
 pub fn downloadModelToWriterParallel(
     allocator: Allocator,
     io: std.Io,
+    environ: std.process.Environ,
     config: DownloadConfig,
     writer: *std.Io.Writer,
     compute_hashes: bool,
 ) !void {
-    const hf_token = try OwnedToken.init(allocator, config.hf_token);
+    const hf_token = try OwnedToken.init(allocator, environ, config.hf_token);
     defer hf_token.deinit();
 
     var xet_token = try requestXetToken(allocator, io, config, hf_token.value);
@@ -435,6 +440,7 @@ pub fn downloadModelToWriterParallel(
 pub fn downloadModelToFileParallel(
     allocator: Allocator,
     io: std.Io,
+    environ: std.process.Environ,
     config: DownloadConfig,
     output_path: []const u8,
     compute_hashes: bool,
@@ -446,7 +452,7 @@ pub fn downloadModelToFileParallel(
     var file_writer = file.writer(io, &file_buffer);
     defer file_writer.interface.flush() catch {};
 
-    try downloadModelToWriterParallel(allocator, io, config, &file_writer.interface, compute_hashes);
+    try downloadModelToWriterParallel(allocator, io, environ, config, &file_writer.interface, compute_hashes);
 }
 
 /// Download a model from Hugging Face and return it as owned memory
@@ -475,9 +481,10 @@ pub fn downloadModelToFileParallel(
 pub fn downloadModel(
     allocator: Allocator,
     io: std.Io,
+    environ: std.process.Environ,
     config: DownloadConfig,
 ) ![]u8 {
-    const hf_token = try OwnedToken.init(allocator, config.hf_token);
+    const hf_token = try OwnedToken.init(allocator, environ, config.hf_token);
     defer hf_token.deinit();
 
     var xet_token = try requestXetToken(allocator, io, config, hf_token.value);
