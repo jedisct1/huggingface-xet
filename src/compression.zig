@@ -161,48 +161,45 @@ pub fn decompress(
     }
 }
 
+const ByteGroupOffsets = struct {
+    split: usize,
+    rem: usize,
+    g1: usize,
+    g2: usize,
+    g3: usize,
+
+    fn init(len: usize) ByteGroupOffsets {
+        const split = len / 4;
+        const rem = len % 4;
+        const g0_size = split + @min(1, rem);
+        const g1_size = split + @min(1, if (rem >= 1) rem - 1 else 0);
+        const g2_size = split + @min(1, if (rem >= 2) rem - 2 else 0);
+        return .{
+            .split = split,
+            .rem = rem,
+            .g1 = g0_size,
+            .g2 = g0_size + g1_size,
+            .g3 = g0_size + g1_size + g2_size,
+        };
+    }
+};
+
 pub fn applyByteGrouping(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
     const result = try allocator.alloc(u8, data.len);
     errdefer allocator.free(result);
 
-    const n = data.len;
-    const split = n / 4;
-    const rem = n % 4;
+    const g = ByteGroupOffsets.init(data.len);
 
-    // Calculate group sizes based on remainder
-    const g0_size = split + @min(1, rem);
-    const g1_size = split + @min(1, if (rem >= 1) rem - 1 else 0);
-    const g2_size = split + @min(1, if (rem >= 2) rem - 2 else 0);
-
-    // Group offsets in output buffer
-    const g1_offset = g0_size;
-    const g2_offset = g1_offset + g1_size;
-    const g3_offset = g2_offset + g2_size;
-
-    // Fill the full groups
-    for (0..split) |i| {
+    for (0..g.split) |i| {
         result[i] = data[4 * i];
-        result[g1_offset + i] = data[4 * i + 1];
-        result[g2_offset + i] = data[4 * i + 2];
-        result[g3_offset + i] = data[4 * i + 3];
+        result[g.g1 + i] = data[4 * i + 1];
+        result[g.g2 + i] = data[4 * i + 2];
+        result[g.g3 + i] = data[4 * i + 3];
     }
 
-    // Handle remainder bytes
-    switch (rem) {
-        1 => {
-            result[split] = data[4 * split];
-        },
-        2 => {
-            result[split] = data[4 * split];
-            result[g1_offset + split] = data[4 * split + 1];
-        },
-        3 => {
-            result[split] = data[4 * split];
-            result[g1_offset + split] = data[4 * split + 1];
-            result[g2_offset + split] = data[4 * split + 2];
-        },
-        else => {},
-    }
+    if (g.rem >= 1) result[g.split] = data[4 * g.split];
+    if (g.rem >= 2) result[g.g1 + g.split] = data[4 * g.split + 1];
+    if (g.rem >= 3) result[g.g2 + g.split] = data[4 * g.split + 2];
 
     return result;
 }
@@ -211,44 +208,18 @@ pub fn reverseByteGrouping(allocator: std.mem.Allocator, data: []const u8) ![]u8
     const result = try allocator.alloc(u8, data.len);
     errdefer allocator.free(result);
 
-    const n = data.len;
-    const split = n / 4;
-    const rem = n % 4;
+    const g = ByteGroupOffsets.init(data.len);
 
-    // Calculate group sizes based on remainder
-    const g0_size = split + @min(1, rem);
-    const g1_size = split + @min(1, if (rem >= 1) rem - 1 else 0);
-    const g2_size = split + @min(1, if (rem >= 2) rem - 2 else 0);
-
-    // Group offsets in input buffer
-    const g1_offset = g0_size;
-    const g2_offset = g1_offset + g1_size;
-    const g3_offset = g2_offset + g2_size;
-
-    // Regroup the full groups
-    for (0..split) |i| {
+    for (0..g.split) |i| {
         result[4 * i] = data[i];
-        result[4 * i + 1] = data[g1_offset + i];
-        result[4 * i + 2] = data[g2_offset + i];
-        result[4 * i + 3] = data[g3_offset + i];
+        result[4 * i + 1] = data[g.g1 + i];
+        result[4 * i + 2] = data[g.g2 + i];
+        result[4 * i + 3] = data[g.g3 + i];
     }
 
-    // Handle remainder bytes
-    switch (rem) {
-        1 => {
-            result[4 * split] = data[split];
-        },
-        2 => {
-            result[4 * split] = data[split];
-            result[4 * split + 1] = data[g1_offset + split];
-        },
-        3 => {
-            result[4 * split] = data[split];
-            result[4 * split + 1] = data[g1_offset + split];
-            result[4 * split + 2] = data[g2_offset + split];
-        },
-        else => {},
-    }
+    if (g.rem >= 1) result[4 * g.split] = data[g.split];
+    if (g.rem >= 2) result[4 * g.split + 1] = data[g.g1 + g.split];
+    if (g.rem >= 3) result[4 * g.split + 2] = data[g.g2 + g.split];
 
     return result;
 }
